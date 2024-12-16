@@ -7,6 +7,8 @@ k8s 多集群管理平台
 
 ![overview.png](doc/images/overview.png)
 
+![nodes.jpg](doc/images/nodes.jpg)
+
 #### 软件架构
 软件架构说明
 
