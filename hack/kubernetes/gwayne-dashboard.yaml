@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app: gwayne-dashboard
+  name: gwayne-dashboard
+  namespace: default
+data:
+  config.js: |-
+    window.CONFIG = {
+        URL: 'http://nodeip:32001',
+        RAVEN: false,
+        RAVEN_DSN: 'RAVEN_DSN'
+    };
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: gwayne-dashboard
+  name: gwayne-dashboard
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gwayne-dashboard
+  template:
+    metadata:
+      labels:
+        app: gwayne-dashboard
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: gwayne-dashboard
+            items:
+              - key: config.js
+                path: config.js
+      containers:
+        - name: wayne
+          image: 'crpi-p7108t7misthqj45.cn-shenzhen.personal.cr.aliyuncs.com/gwayne/gwayne-dashboard:v1.0'
+          resources:
+            limits:
+              cpu: '0.5'
+              memory: 1Gi
+            requests:
+              cpu: '0.5'
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/openresty/nginx/html/config.js
+              subPath: config.js
+          imagePullPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: gwayne-dashboard
+  name: gwayne-dashboard
+  namespace: default
+spec:
+  type: NodePort
+  ports:
+    - nodePort: 32000
+      name: http
+      protocol: TCP
+      port: 80
+      targetPort: 80
+  selector:
+    app: gwayne-dashboard
