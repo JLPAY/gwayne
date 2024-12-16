@@ -1,0 +1,5 @@
+conf/app.ini
+tmp/
+logs/
+*.exe
+gwayne

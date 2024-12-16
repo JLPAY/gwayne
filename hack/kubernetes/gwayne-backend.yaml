@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app: gwayne-backend
+  name: gwayne-backend
+  namespace: default
+data:
+  app.ini: |-
+    [App]
+    Name = gwayne
+    HttpPort = 8080
+    RunMode = debug
+    RsaPrivateKey = "./conf/rsa-private.pem"
+    RsaPublicKey = "./conf/rsa-public.pem"
+    TokenLifeTime = 86400
+    AppKey = "860af247a91adfad2q3tfc5797921c6"
+    
+    [DataBase]
+    Driver = mysql
+    DBName = gwayne
+    Host = *.*.*.*
+    Port = 3306
+    DBUser = root
+    DBPassword = ********
+    DBConnTTL = 3600
+    ShowSql = true
+    LogMode = false
+    
+    [Log]
+    LogLevel = debug
+    LogPath = ./logs/
+    
+    [Auth.Oauth2]
+    Enabled = true
+    RedirectURL = "http://127.0.0.1:8080"
+    ClientId = ********
+    ClientSecret = ***********
+    AuthURL = https://github.com/login/oauth/authorize
+    TokenURL = https://github.com/login/oauth/access_token
+    ApiURL = https://api.github.com/user
+    #Scopes = user:email
+    # If your OAuth 2.0-based authorization service does not have email, name, and dispaly fields, use mapping criteria.
+    # github ApiMapping = name:login,email:email,display:login
+    ApiMapping = name:login,email:email,display:login
+    
+    [Auth.Ldap]
+    Enabled = true
+    Url = ldap://*.*.*.*:389
+    BaseDN = dc=gwayne,dc=com
+    BindDN = cn=readonly,dc=gwayne,dc=com
+    Password = ******
+    UseSSL = false
+    SkipTLS = false
+    Filter = (|(uid=%s)(mail=%s)(cn=%s)(telephoneNumber=%s))
+    #scope = subtree  ; 可选值: subtree, singlelevel, base
+    #username_attribute = uid
+    #mail_attribute = mail
+    #displayname_attribute = cn
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: gwayne-backend
+  name: gwayne-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gwayne-backend
+  template:
+    metadata:
+      labels:
+        app: gwayne-backend
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: gwayne-backend
+      containers:
+        - name: wayne
+          image: 'crpi-p7108t7misthqj45.cn-shenzhen.personal.cr.aliyuncs.com/gwayne/gwayne-backend:v1.1'
+          command:
+            - /opt/wayne/gwayne
+            - '-v'
+            - '2'
+          resources:
+            limits:
+              cpu: '0.5'
+              memory: 1Gi
+            requests:
+              cpu: '0.5'
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /opt/wayne/conf/app.ini
+              subPath: app.ini
+          readinessProbe:
+            httpGet:
+              path: healthz
+              port: 8080
+            timeoutSeconds: 1
+            periodSeconds: 10
+            failureThreshold: 3
+          imagePullPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: gwayne-backend
+  name: gwayne-backend
+  namespace: default
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 32001
+  selector:
+    app: gwayne-backend
