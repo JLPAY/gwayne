@@ -15,22 +15,12 @@ services:
       - "3306"
     ports:
       - "3306:3306"
-
-  gwayne-backend:
-    image: crpi-p7108t7misthqj45.cn-shenzhen.personal.cr.aliyuncs.com/gwayne/gwayne-backend:v1.1
-    command: /opt/wayne/gwayne
     volumes:
-      - ./conf/app.conf:/opt/wayne/conf/app.conf
-    depends_on:
-      - mysql
-    restart: always
-    networks:
-      - default
-    ports:
-      - "8080:8080"
+      - "./init:/docker-entrypoint-initdb.d/"
+      - ./db:/var/lib/mysql
 
   wayne-frontend:
-    image: 360cloud/wayne-frontend:latest
+    image: crpi-p7108t7misthqj45.cn-shenzhen.personal.cr.aliyuncs.com/gwayne/gwayne-dashboard:v1.0
     volumes:
       - ./conf/config.js:/usr/local/openresty/nginx/html/config.js
     depends_on:
@@ -40,3 +30,16 @@ services:
       - default
     ports:
       - "4200:80"
+
+  gwayne-backend:
+    image: crpi-p7108t7misthqj45.cn-shenzhen.personal.cr.aliyuncs.com/gwayne/gwayne-backend:v1.2
+    command: /opt/wayne/gwayne
+    volumes:
+      - ./conf/app.ini:/opt/wayne/conf/app.ini
+    depends_on:
+      - mysql
+    restart: always
+    networks:
+      - default
+    ports:
+      - "8080:8080"
