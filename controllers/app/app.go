@@ -24,11 +24,11 @@ func AppStatistics(c *gin.Context) {
 	// 构造响应数据
 	response := ApiResponse{
 		Data: DataResponse{
-			Total: 3,
+			Total: 0,
 			Details: []Detail{
 				{
 					Name:  "demo",
-					Count: 3,
+					Count: 0,
 				},
 			},
 		},
@@ -46,7 +46,7 @@ func UserStatistics(c *gin.Context) {
 	// 构造响应结构体
 	response := gin.H{
 		"data": gin.H{
-			"total": 1,
+			"total": 0,
 		},
 	}
 

@@ -1,0 +1,42 @@
+version: '3'
+
+services:
+
+  mysql:
+    image: mysql:5.7
+    restart: always
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_USER: 'user'
+      MYSQL_ROOT_PASSWORD: 'root.2024'
+    networks:
+      - default
+    expose:
+      - "3306"
+    ports:
+      - "3306:3306"
+
+  gwayne-backend:
+    image: crpi-p7108t7misthqj45.cn-shenzhen.personal.cr.aliyuncs.com/gwayne/gwayne-backend:v1.1
+    command: /opt/wayne/gwayne
+    volumes:
+      - ./conf/app.conf:/opt/wayne/conf/app.conf
+    depends_on:
+      - mysql
+    restart: always
+    networks:
+      - default
+    ports:
+      - "8080:8080"
+
+  wayne-frontend:
+    image: 360cloud/wayne-frontend:latest
+    volumes:
+      - ./conf/config.js:/usr/local/openresty/nginx/html/config.js
+    depends_on:
+      - wayne-backend
+    restart: always
+    networks:
+      - default
+    ports:
+      - "4200:80"

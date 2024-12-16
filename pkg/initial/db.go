@@ -23,18 +23,21 @@ func InitDb() {
 func ensureDatabase() error {
 
 	// 构建数据库连接字符串（不指定数据库名，确保是连接到 MySQL 服务）
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 		config.Conf.DataBase.DBUser,
 		config.Conf.DataBase.DBPassword,
 		config.Conf.DataBase.Host,
 		config.Conf.DataBase.Port,
+		"mysql", // 使用 "mysql" 数据库作为默认数据库
 	)
-
+	
 	// 使用 GORM 连接数据库
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent), // 禁用 SQL 日志
+		//Logger: logger.Default.LogMode(logger.Info), // 显示 SQL 日志
 	})
 	if err != nil {
+		//fmt.Println("Error connecting to DB:", err) // 打印详细错误信息
 		return fmt.Errorf("failed to connect to MySQL: %w", err)
 	}
 
