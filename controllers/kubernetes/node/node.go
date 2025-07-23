@@ -565,3 +565,147 @@ func validateLabel(key, value string) error {
 
 	return nil
 }
+
+// Cordon 隔离节点
+// @router /:name/clusters/:cluster/cordon [put]
+func Cordon(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+
+	client, err := client.Client(cluster)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "获取集群客户端失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 获取当前节点信息
+	currentNode, err := node.GetNodeByName(client, name)
+	if err != nil {
+		klog.Errorf("Failed to get node %s: %v", name, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点不存在: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 检查节点是否已经被隔离
+	if currentNode.Spec.Unschedulable {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点已经被隔离",
+			},
+		})
+		return
+	}
+
+	// 设置节点为不可调度（隔离）
+	currentNode.Spec.Unschedulable = true
+
+	// 更新节点
+	result, err := node.UpdateNode(client, currentNode)
+	if err != nil {
+		klog.Errorf("Failed to cordon node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点隔离失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"message": "节点隔离成功",
+			"node":    result,
+		},
+	})
+}
+
+// Cordon 隔离节点
+// @router /:name/clusters/:cluster/cordon [put]
+func UnCordon(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+
+	client, err := client.Client(cluster)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "获取集群客户端失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 获取当前节点信息
+	currentNode, err := node.GetNodeByName(client, name)
+	if err != nil {
+		klog.Errorf("Failed to get node %s: %v", name, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点不存在: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 检查节点是否已经被隔离
+	if !currentNode.Spec.Unschedulable {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点未被隔离，无需解除隔离",
+			},
+		})
+		return
+	}
+
+	// 设置节点为不可调度（隔离）
+	currentNode.Spec.Unschedulable = false
+
+	// 更新节点
+	result, err := node.UpdateNode(client, currentNode)
+	if err != nil {
+		klog.Errorf("Failed to cordon node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点解除隔离失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"message": "节点解除隔离成功",
+			"node":    result,
+		},
+	})
+}
