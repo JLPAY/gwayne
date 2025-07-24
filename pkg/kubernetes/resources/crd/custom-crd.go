@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/dataselector"
 	"github.com/JLPAY/gwayne/pkg/pagequery"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,7 +31,18 @@ func GetCustomCRDPage(clientset *apiextensionsclientset.Clientset, dynamicClient
 
 	// 通过 CRD 的 `Spec.Names.Plural` 获取 CRD 定义的资源名称
 	resource := crd.Spec.Names.Plural
-	version := crd.Spec.Versions[0].Name // 使用第一个版本
+
+	// 获取最优版本，而不是直接使用第一个版本
+	bestVersion := getBestCRDVersion(crd)
+	if bestVersion == nil {
+		return nil, fmt.Errorf("no valid version found for CRD %s", crdName)
+	}
+	version := bestVersion.Name
+
+	// 验证版本是否可用
+	if !bestVersion.Served {
+		return nil, fmt.Errorf("version %s of CRD %s is not served", version, crdName)
+	}
 
 	resourceGVR := schema.GroupVersionResource{
 		Group:    group,
@@ -41,7 +53,7 @@ func GetCustomCRDPage(clientset *apiextensionsclientset.Clientset, dynamicClient
 	// 构建动态客户端
 	resourceClient := dynamicClient.Resource(resourceGVR)
 
-	klog.V(2).Infof("CRD Group Version:%s , %s", crd.Spec.Group, crd.Spec.Versions[0].Name)
+	klog.V(2).Infof("CRD Group Version:%s , %s", crd.Spec.Group, version)
 	klog.V(2).Info("CRD Resource Name:", resource)
 
 	var crdInstances *unstructured.UnstructuredList
@@ -110,7 +122,7 @@ func GetCustomCRDInstanceByName(dynamicClient dynamic.Interface, group, version,
 
 func CreateCustomCRD(clientset *apiextensionsclientset.Clientset, body interface{}) (runtime.Object, error) {
 	// 将 body 转换为 CustomResourceDefinition 对象
-	crd := &apiextensionsv1.CustomResourceDefinition{}
+	crd := &apiextensions.CustomResourceDefinition{}
 	if err := json.Unmarshal(body.([]byte), crd); err != nil {
 		klog.Errorf("Failed to unmarshal body into CustomResourceDefinition: %v", err)
 		return nil, err

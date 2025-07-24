@@ -1,6 +1,8 @@
 package client
 
 import (
+	"sync"
+
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client/api"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -8,7 +10,6 @@ import (
 	autoscalingv1 "k8s.io/client-go/listers/autoscaling/v1"
 	corev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
-	"sync"
 )
 
 var sharedInformerFactoryCache = sync.Map{} // 用于缓存工厂实例
@@ -98,4 +99,15 @@ func (c *CacheFactory) EndpointLister() corev1.EndpointsLister {
 
 func (c *CacheFactory) HPALister() autoscalingv1.HorizontalPodAutoscalerLister {
 	return c.sharedInformerFactory.Autoscaling().V1().HorizontalPodAutoscalers().Lister()
+}
+
+// Close 关闭缓存工厂
+func (c *CacheFactory) Close() {
+	// 清理 informer 和 stop 通道
+	if c.stopChan != nil {
+		close(c.stopChan)
+	}
+	if c.sharedInformerFactory != nil {
+		c.sharedInformerFactory.Shutdown()
+	}
 }

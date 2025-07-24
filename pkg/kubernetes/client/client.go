@@ -2,6 +2,9 @@ package client
 
 import (
 	"errors"
+	"sync"
+	"time"
+
 	"github.com/JLPAY/gwayne/models"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
@@ -9,8 +12,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-	"sync"
-	"time"
 )
 
 const (
