@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"fmt"
+
 	"github.com/JLPAY/gwayne/controllers/auth"
 	"github.com/JLPAY/gwayne/models"
 	"github.com/JLPAY/gwayne/pkg/config"
@@ -54,7 +55,7 @@ func (l *LDAPAuthProvider) Authenticate(authModel models.AuthModel) (*models.Use
 	user := &models.User{
 		Name:    authModel.Username,
 		Email:   entrys[0].GetAttributeValue("mail"),
-		Admin:   false, // 根据需要设置权限
+		Admin:   true, // 根据需要设置权限
 		Display: entrys[0].GetAttributeValue("cn"),
 	}
 

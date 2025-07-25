@@ -57,5 +57,7 @@ func SetupKubernetesProxyResourcesRoutes(rg *gin.RouterGroup) {
 		proxyResourceGroup.PUT("/namespaces/:namespaceName/:kind/:name", proxy.Put)
 		proxyResourceGroup.DELETE("/namespaces/:namespaceName/:kind/:name", proxy.Delete)
 
+		// 重启功能路由
+		proxyResourceGroup.PUT("/namespaces/:namespaceName/:kind/:name/restart", proxy.RestartWorkload) // 使用polymorphichelpers的重启功能
 	}
 }
