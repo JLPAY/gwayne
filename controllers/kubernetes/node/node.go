@@ -710,3 +710,61 @@ func UnCordon(c *gin.Context) {
 		},
 	})
 }
+
+// 删除重复的DrainOptions定义，使用pkg中的类型
+
+// DrainNode 驱逐节点上的所有Pod
+// @router /:name/clusters/:cluster/drain [post]
+func DrainNode(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+
+	// 解析请求体
+	var drainOptions node.DrainOptions
+	if err := c.ShouldBindJSON(&drainOptions); err != nil {
+		klog.Errorf("Failed to parse drain options: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "error",
+			"data": gin.H{
+				"message": "驱逐选项解析失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	client, err := client.Client(cluster)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "获取集群客户端失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 执行节点驱逐
+	err = node.DrainNode(client, name, &drainOptions)
+	if err != nil {
+		klog.Errorf("Failed to drain node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点驱逐失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"message": "节点驱逐成功",
+		},
+	})
+}

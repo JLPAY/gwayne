@@ -3,6 +3,9 @@ package node
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/common"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/pod"
@@ -10,8 +13,7 @@ import (
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
-	"sort"
-	"strconv"
+	"k8s.io/klog/v2"
 )
 
 type NodeStatistics struct {
@@ -215,6 +217,78 @@ func UpdateNode(cli *kubernetes.Clientset, node *corev1.Node) (*corev1.Node, err
 
 func DeleteNode(cli *kubernetes.Clientset, name string) error {
 	return cli.CoreV1().Nodes().Delete(context.TODO(), name, metaV1.DeleteOptions{})
+}
+
+// DrainNode 驱逐节点上的所有Pod
+func DrainNode(cli *kubernetes.Clientset, name string, options *DrainOptions) error {
+	// 首先将节点设置为不可调度
+	node, err := cli.CoreV1().Nodes().Get(context.TODO(), name, metaV1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %v", name, err)
+	}
+
+	// 设置节点为不可调度
+	node.Spec.Unschedulable = true
+	_, err = cli.CoreV1().Nodes().Update(context.TODO(), node, metaV1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to cordon node %s: %v", name, err)
+	}
+
+	// 获取节点上的所有Pod
+	pods, err := cli.CoreV1().Pods("").List(context.TODO(), metaV1.ListOptions{
+		FieldSelector: fmt.Sprintf("spec.nodeName=%s", name),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list pods on node %s: %v", name, err)
+	}
+
+	// 驱逐Pod
+	for _, pod := range pods.Items {
+		// 跳过已经删除的Pod
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+
+		// 跳过DaemonSet Pod（如果设置了忽略）
+		if options.IgnoreDaemonSets && isDaemonSetPod(pod) {
+			continue
+		}
+
+		// 删除Pod
+		deleteOptions := metaV1.DeleteOptions{}
+		if options.GracePeriod > 0 {
+			deleteOptions.GracePeriodSeconds = &options.GracePeriod
+		}
+
+		err := cli.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, deleteOptions)
+		if err != nil {
+			if !options.Force {
+				return fmt.Errorf("failed to delete pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			}
+			// 如果强制删除，记录错误但继续
+			klog.Warningf("Failed to delete pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// DrainOptions 驱逐选项
+type DrainOptions struct {
+	Force              bool  `json:"force"`              // 强制驱逐
+	IgnoreDaemonSets   bool  `json:"ignoreDaemonSets"`   // 忽略DaemonSet
+	DeleteEmptyDirData bool  `json:"deleteEmptyDirData"` // 删除emptyDir数据
+	GracePeriod        int64 `json:"gracePeriod"`        // 优雅终止期
+}
+
+// isDaemonSetPod 检查Pod是否属于DaemonSet
+func isDaemonSetPod(pod corev1.Pod) bool {
+	for _, ownerRef := range pod.OwnerReferences {
+		if ownerRef.Kind == "DaemonSet" {
+			return true
+		}
+	}
+	return false
 }
 
 func GetNodeByName(cli *kubernetes.Clientset, name string) (*corev1.Node, error) {
