@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/dataselector"
 	"github.com/JLPAY/gwayne/pkg/pagequery"
@@ -120,11 +121,12 @@ func GetCustomCRDInstanceByName(dynamicClient dynamic.Interface, group, version,
 	return instance, nil
 }
 
-func CreateCustomCRD(clientset *apiextensionsclientset.Clientset, body interface{}) (runtime.Object, error) {
+func CreateCustomCRD(clientset *apiextensionsclientset.Clientset, body io.Reader) (runtime.Object, error) {
 	// 将 body 转换为 CustomResourceDefinition 对象
 	crd := &apiextensions.CustomResourceDefinition{}
-	if err := json.Unmarshal(body.([]byte), crd); err != nil {
-		klog.Errorf("Failed to unmarshal body into CustomResourceDefinition: %v", err)
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(crd); err != nil {
+		klog.Errorf("Failed to decode body into CustomResourceDefinition: %v", err)
 		return nil, err
 	}
 
@@ -184,4 +186,67 @@ func DeleteCustomCRD(dynamicClient dynamic.Interface, group, version, kind, name
 		return err
 	}
 	return nil
+}
+
+// 创建CRD实例（带namespace）
+func CreateCustomCRDInstance(dynamicClient dynamic.Interface, group, version, kind, namespace string, body io.Reader) (runtime.Object, error) {
+	// 创建GVR
+	resourceGVR := schema.GroupVersionResource{
+		Group:    group,
+		Version:  version,
+		Resource: kind,
+	}
+
+	// 获取资源客户端
+	resourceClient := dynamicClient.Resource(resourceGVR)
+
+	// 将body转换为unstructured对象
+	var obj unstructured.Unstructured
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(&obj); err != nil {
+		klog.Errorf("Failed to decode body into unstructured object: %v", err)
+		return nil, err
+	}
+
+	// 确保namespace字段正确设置
+	obj.SetNamespace(namespace)
+
+	// 创建资源
+	createdObj, err := resourceClient.Namespace(namespace).Create(context.TODO(), &obj, metav1.CreateOptions{})
+	if err != nil {
+		klog.Errorf("Failed to create CRD instance group: %s,version: %s,kind: %s,namespace: %s: %v", group, version, kind, namespace, err)
+		return nil, err
+	}
+
+	return createdObj, nil
+}
+
+// 创建集群级别的CRD实例（不带namespace）
+func CreateCustomCRDInstanceClusterScoped(dynamicClient dynamic.Interface, group, version, kind string, body io.Reader) (runtime.Object, error) {
+	// 创建GVR
+	resourceGVR := schema.GroupVersionResource{
+		Group:    group,
+		Version:  version,
+		Resource: kind,
+	}
+
+	// 获取资源客户端
+	resourceClient := dynamicClient.Resource(resourceGVR)
+
+	// 将body转换为unstructured对象
+	var obj unstructured.Unstructured
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(&obj); err != nil {
+		klog.Errorf("Failed to decode body into unstructured object: %v", err)
+		return nil, err
+	}
+
+	// 创建资源（集群级别，不需要namespace）
+	createdObj, err := resourceClient.Create(context.TODO(), &obj, metav1.CreateOptions{})
+	if err != nil {
+		klog.Errorf("Failed to create cluster-scoped CRD instance group: %s,version: %s,kind: %s: %v", group, version, kind, err)
+		return nil, err
+	}
+
+	return createdObj, nil
 }

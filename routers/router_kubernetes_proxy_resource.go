@@ -41,6 +41,7 @@ func SetupKubernetesProxyResourcesRoutes(rg *gin.RouterGroup) {
 		proxyResourceGroup.GET("/apis/:group/:version/:kind/:name", crd.CRDGet)
 		proxyResourceGroup.PUT("/apis/:group/:version/:kind/:name", crd.CRDUpdate)
 		proxyResourceGroup.DELETE("/apis/:group/:version/:kind/:name", crd.CRDDelete)
+		proxyResourceGroup.POST("/apis/:group/:version/namespaces/:namespacesName/:kind", crd.CRDCreateWithNamespace)
 		proxyResourceGroup.GET("/apis/:group/:version/namespaces/:namespacesName/:kind/:name", crd.CRDGet)
 		proxyResourceGroup.PUT("/apis/:group/:version/namespaces/:namespacesName/:kind/:name", crd.CRDUpdate)
 		proxyResourceGroup.DELETE("/apis/:group/:version/namespaces/:namespacesName/:kind/:name", crd.CRDDelete)
