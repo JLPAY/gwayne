@@ -13,8 +13,9 @@ const (
 	ReferenceUIDProperty      PropertyName = "referenceUID"
 
 	// Pod Property
-	PodIPProperty    PropertyName = "podIP"
-	NodeNameProperty PropertyName = "nodeName"
+	PodIPProperty       PropertyName = "podIP"
+	NodeNameProperty    PropertyName = "nodeName"
+	StatusPhaseProperty PropertyName = "statusPhase"
 
 	// Event Property
 	ReasonProperty                  PropertyName = "reason"

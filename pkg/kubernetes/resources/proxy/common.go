@@ -42,6 +42,9 @@ func (cell PodCell) GetProperty(name dataselector.PropertyName) dataselector.Com
 		return dataselector.StdComparableString(cell.Status.PodIP)
 	case dataselector.NodeNameProperty:
 		return dataselector.StdComparableString(cell.Spec.NodeName)
+	case dataselector.StatusPhaseProperty:
+		// Return pod status phase (Running, Pending, Succeeded, Failed, Unknown, etc.)
+		return dataselector.StdComparableString(string(cell.Status.Phase))
 	default:
 		return baseProperty(name, cell.ObjectMeta)
 	}
