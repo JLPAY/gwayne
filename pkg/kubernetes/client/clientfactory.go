@@ -26,7 +26,14 @@ func (h *resourceHandler) getClientByGroupVersion(groupVersion schema.GroupVersi
 		return h.client.AutoscalingV1().RESTClient()
 
 	case "networking.k8s.io":
-		return h.client.NetworkingV1().RESTClient()
+		//return h.client.NetworkingV1().RESTClient()
+		//return h.client.NetworkingV1beta1().RESTClient()
+		switch groupVersion.Version {
+		case "v1":
+			return h.client.NetworkingV1().RESTClient()
+		case "v1beta1":
+			return h.client.NetworkingV1beta1().RESTClient()
+		}
 
 	case "rbac.authorization.k8s.io":
 		return h.client.RbacV1().RESTClient()
@@ -39,4 +46,5 @@ func (h *resourceHandler) getClientByGroupVersion(groupVersion schema.GroupVersi
 		klog.Warningf("Unknown API group: %s", groupVersion.Group)
 		return nil
 	}
+	return nil
 }

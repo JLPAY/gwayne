@@ -1,11 +1,12 @@
 package dataselector
 
 import (
-	"github.com/JLPAY/gwayne/pkg/pagequery"
-	"k8s.io/klog/v2"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/JLPAY/gwayne/pkg/pagequery"
+	"k8s.io/klog/v2"
 )
 
 // DataCell 接口定义了数据单元的基本操作，允许获取属性并与其他数据单元进行比较。
@@ -109,10 +110,38 @@ func (ds *DataSelector) Filter() *DataSelector {
 				continue
 			}
 
-			// 使用 Contains 方法检查值是否符合过滤条件
-			if !v.Contains(ParseToComparableValue(value)) {
-				matches = false
-				continue
+			// 对于 statusPhase 字段，使用大小写不敏感的匹配
+			if key == string(StatusPhaseProperty) {
+				// 将状态值转换为小写进行比较，支持大小写不敏感匹配
+				if strValue, ok := value.(string); ok {
+					lowerValue := strings.ToLower(strValue)
+					// 获取属性值并转换为小写进行比较
+					if strProp, ok := v.(StdComparableString); ok {
+						lowerProp := strings.ToLower(string(strProp))
+						if !strings.Contains(lowerProp, lowerValue) {
+							matches = false
+							continue
+						}
+					} else {
+						// 如果不是字符串类型，使用原有的 Contains 方法
+						if !v.Contains(ParseToComparableValue(value)) {
+							matches = false
+							continue
+						}
+					}
+				} else {
+					// 如果值不是字符串类型，使用原有的 Contains 方法
+					if !v.Contains(ParseToComparableValue(value)) {
+						matches = false
+						continue
+					}
+				}
+			} else {
+				// 对于其他字段，使用原有的 Contains 方法（大小写敏感）
+				if !v.Contains(ParseToComparableValue(value)) {
+					matches = false
+					continue
+				}
 			}
 		}
 		if matches {

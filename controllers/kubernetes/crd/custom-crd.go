@@ -1,13 +1,14 @@
 package crd
 
 import (
+	"net/http"
+
 	"github.com/JLPAY/gwayne/controllers/base"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/crd"
 	"github.com/gin-gonic/gin"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
-	"net/http"
 )
 
 // @Title List CRD
@@ -82,12 +83,13 @@ func CRDGet(c *gin.Context) {
 }
 
 // @Title Create
-// @Description create CustomResourceDefinition
-// @Param	namespace		path 	string	true		"the namespace name"
+// @Description create CustomResourceDefinition instance (cluster-scoped)
 // @router / [post]
 func CRDCreate(c *gin.Context) {
 	cluster := c.Param("cluster")
-	//namespace := c.Param("namespacesName")
+	group := c.Param("group")
+	version := c.Param("version")
+	kind := c.Param("kind")
 
 	// 获取 Kubernetes 客户端
 	manager, err := client.Manager(cluster)
@@ -97,7 +99,62 @@ func CRDCreate(c *gin.Context) {
 		return
 	}
 
-	result, err := crd.CreateCustomCRD(manager.CrdClient, c.Request.Body)
+	// 处理版本为undefined的情况
+	if version == "" || version == "undefined" {
+		crdVersion, err := crd.GetBestCRDVersionByGroupKind(manager.CrdClient, group, kind)
+		if err != nil {
+			klog.Errorf("list cluster %s error: %v", cluster, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		version = crdVersion.Name
+	}
+
+	klog.V(2).Infof("creating cluster-scoped CRD instance group: %s, version: %s, kind: %s", group, version, kind)
+
+	result, err := crd.CreateCustomCRDInstanceClusterScoped(manager.DynamicClient, group, version, kind, c.Request.Body)
+	if err != nil {
+		klog.Errorf("create cluster %s error: %v", cluster, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// @Title CreateWithNamespace
+// @Description create CustomResourceDefinition with namespace
+// @Param	namespace		path 	string	true		"the namespace name"
+// @router / [post]
+func CRDCreateWithNamespace(c *gin.Context) {
+	cluster := c.Param("cluster")
+	namespace := c.Param("namespacesName")
+	group := c.Param("group")
+	version := c.Param("version")
+	kind := c.Param("kind")
+
+	// 获取 Kubernetes 客户端
+	manager, err := client.Manager(cluster)
+	if err != nil {
+		klog.Errorf("list cluster %s error: %v", cluster, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 处理版本为undefined的情况
+	if version == "" || version == "undefined" {
+		crdVersion, err := crd.GetBestCRDVersionByGroupKind(manager.CrdClient, group, kind)
+		if err != nil {
+			klog.Errorf("list cluster %s error: %v", cluster, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		version = crdVersion.Name
+	}
+
+	klog.V(2).Infof("crd version: %s, namespace: %s", version, namespace)
+
+	result, err := crd.CreateCustomCRDInstance(manager.DynamicClient, group, version, kind, namespace, c.Request.Body)
 	if err != nil {
 		klog.Errorf("create cluster %s error: %v", cluster, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

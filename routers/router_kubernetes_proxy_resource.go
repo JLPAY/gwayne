@@ -41,6 +41,7 @@ func SetupKubernetesProxyResourcesRoutes(rg *gin.RouterGroup) {
 		proxyResourceGroup.GET("/apis/:group/:version/:kind/:name", crd.CRDGet)
 		proxyResourceGroup.PUT("/apis/:group/:version/:kind/:name", crd.CRDUpdate)
 		proxyResourceGroup.DELETE("/apis/:group/:version/:kind/:name", crd.CRDDelete)
+		proxyResourceGroup.POST("/apis/:group/:version/namespaces/:namespacesName/:kind", crd.CRDCreateWithNamespace)
 		proxyResourceGroup.GET("/apis/:group/:version/namespaces/:namespacesName/:kind/:name", crd.CRDGet)
 		proxyResourceGroup.PUT("/apis/:group/:version/namespaces/:namespacesName/:kind/:name", crd.CRDUpdate)
 		proxyResourceGroup.DELETE("/apis/:group/:version/namespaces/:namespacesName/:kind/:name", crd.CRDDelete)
@@ -57,5 +58,7 @@ func SetupKubernetesProxyResourcesRoutes(rg *gin.RouterGroup) {
 		proxyResourceGroup.PUT("/namespaces/:namespaceName/:kind/:name", proxy.Put)
 		proxyResourceGroup.DELETE("/namespaces/:namespaceName/:kind/:name", proxy.Delete)
 
+		// 重启功能路由
+		proxyResourceGroup.PUT("/namespaces/:namespaceName/:kind/:name/restart", proxy.RestartWorkload) // 使用polymorphichelpers的重启功能
 	}
 }

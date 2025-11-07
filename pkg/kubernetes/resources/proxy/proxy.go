@@ -3,6 +3,8 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+
 	"github.com/JLPAY/gwayne/models/response"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client/api"
@@ -10,7 +12,6 @@ import (
 	"github.com/JLPAY/gwayne/pkg/pagequery"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sort"
 )
 
 func GetPage(kubeClient client.ResourceHandler, kind string, namespace string, q *pagequery.QueryParam) (*pagequery.Page, error) {
@@ -49,6 +50,15 @@ func getRealObjCellByKind(name api.ResourceName, object runtime.Object) (datasel
 			return nil, fmt.Errorf("expected *v1.Pod, but got %T", object)
 		}
 		return PodCell(*obj), nil
+
+	case api.ResourceNameEvent:
+		// 如果资源类型是 Event，将其转换为 EventCell 类型
+		obj, ok := object.(*corev1.Event)
+		if !ok {
+			// 如果 object 不是 *v1.Event 类型，返回错误
+			return nil, fmt.Errorf("expected *v1.Event, but got %T", object)
+		}
+		return EventCell(*obj), nil
 
 	default:
 		// 默认处理其他资源类型

@@ -43,6 +43,13 @@ func SetupKubernetesNodeRoutes(rg *gin.RouterGroup) {
 		// 删除 Taint
 		nodeGroup.DELETE("/:name/clusters/:cluster/taint", node.DeleteTaint)
 
+		// cordon node
+		nodeGroup.PUT("/:name/clusters/:cluster/cordon", node.Cordon)
+		nodeGroup.PUT("/:name/clusters/:cluster/uncordon", node.UnCordon)
+
+		// 节点驱逐
+		nodeGroup.POST("/:name/clusters/:cluster/drain", node.DrainNode)
+
 		// 获取节点统计信息
 		nodeGroup.GET("/statistics", node.NodeStatistics)
 	}

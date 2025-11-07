@@ -13,6 +13,20 @@ const (
 	ReferenceUIDProperty      PropertyName = "referenceUID"
 
 	// Pod Property
-	PodIPProperty    PropertyName = "podIP"
-	NodeNameProperty PropertyName = "nodeName"
+	PodIPProperty       PropertyName = "podIP"
+	NodeNameProperty    PropertyName = "nodeName"
+	StatusPhaseProperty PropertyName = "statusPhase"
+
+	// Event Property
+	ReasonProperty                  PropertyName = "reason"
+	TypeProperty                    PropertyName = "type"
+	MessageProperty                 PropertyName = "message"
+	CountProperty                   PropertyName = "count"
+	FirstTimestampProperty          PropertyName = "firstTimestamp"
+	LastTimestampProperty           PropertyName = "lastTimestamp"
+	SourceComponentProperty         PropertyName = "sourceComponent"
+	SourceHostProperty              PropertyName = "sourceHost"
+	InvolvedObjectKindProperty      PropertyName = "involvedObjectKind"
+	InvolvedObjectNameProperty      PropertyName = "involvedObjectName"
+	InvolvedObjectNamespaceProperty PropertyName = "involvedObjectNamespace"
 )

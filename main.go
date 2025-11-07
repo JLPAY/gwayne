@@ -3,16 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/JLPAY/gwayne/pkg/config"
-	"github.com/JLPAY/gwayne/pkg/initial"
-	"github.com/JLPAY/gwayne/pkg/rsakey"
-	"github.com/JLPAY/gwayne/routers"
-	"k8s.io/klog/v2"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/JLPAY/gwayne/controllers/kubernetes/pod"
+	"github.com/JLPAY/gwayne/pkg/config"
+	"github.com/JLPAY/gwayne/pkg/initial"
+	"github.com/JLPAY/gwayne/pkg/rsakey"
+	"github.com/JLPAY/gwayne/routers"
+	"k8s.io/klog/v2"
 )
 
 func main() {
@@ -30,6 +32,10 @@ func main() {
 
 	// 初始化 K8S Client
 	initial.InitClient()
+
+	// 启动shell缓存清理
+	pod.CleanupShellCache()
+	klog.Info("Shell cache cleanup started")
 
 	router := routers.InitRouter()
 

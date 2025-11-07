@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client/api"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,7 +16,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	"sync"
 )
 
 // 定义了资源操作的标准方法，包括 Create、Update、Get、List 和 Delete
@@ -98,13 +99,17 @@ func (h *resourceHandler) Get(kind string, namespace string, name string) (runti
 }
 
 func (h *resourceHandler) Create(kind string, namespace string, object *runtime.Unknown) (*runtime.Unknown, error) {
+	// 参数检查
+	if kind == "" || object == nil {
+		return nil, fmt.Errorf("invalid input: kind or object cannot be empty")
+	}
+
 	// 获取资源的定义信息，包括资源类型、版本、API组等
 	resource, err := h.getResource(kind)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get resource definition for kind %s: %v", kind, err)
 	}
-
-	klog.Infof("resource: %v", resource)
+	klog.Infof("Resource definition: %v", resource)
 
 	// 获取对应的 RESTClient，根据资源的 API 组和版本
 	kubeClient := h.getClientByGroupVersion(resource.GroupVersionResourceKind.GroupVersionResource)

@@ -1,27 +1,30 @@
 package pod
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/360yun/sockjs-go/sockjs"
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/hack"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
-	"github.com/360yun/sockjs-go/sockjs"
 	"github.com/gin-gonic/gin"
-	"io"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
-	"math/rand"
-	"net/http"
-	"strconv"
-	"time"
 )
 
 // 用于处理终端的输入输出和大小调整
@@ -55,6 +58,18 @@ type TerminalResult struct {
 	Container string `json:"container,omitempty"`
 	Cmd       string `json:"cmd,omitempty"`
 }
+
+// Shell检测缓存
+type ShellCache struct {
+	shell     string
+	timestamp time.Time
+}
+
+var (
+	shellCacheMap = make(map[string]*ShellCache)
+	shellCacheMux sync.RWMutex
+	shellCacheTTL = 5 * time.Minute // 5分钟缓存
+)
 
 // 获取终端的尺寸（行列数），从 sizeChan 通道获取
 func (t TerminalSession) Next() *remotecommand.TerminalSize {
@@ -114,6 +129,74 @@ func (t TerminalSession) Close(status uint32, reason string) {
 	klog.Infof("close socket (%s). %d, %s", t.id, status, reason)
 }
 
+// 预检测shell可用性，使用缓存优化性能
+func preCheckShell(k8sClient *kubernetes.Clientset, cfg *rest.Config, namespace, pod, container string) (string, error) {
+	cacheKey := fmt.Sprintf("%s-%s-%s", namespace, pod, container)
+
+	// 检查缓存
+	shellCacheMux.RLock()
+	if cached, exists := shellCacheMap[cacheKey]; exists && time.Since(cached.timestamp) < shellCacheTTL {
+		shellCacheMux.RUnlock()
+		klog.V(2).Infof("Using cached shell for %s: %s", cacheKey, cached.shell)
+		return cached.shell, nil
+	}
+	shellCacheMux.RUnlock()
+
+	// 预检测可用的shell
+	validShells := []string{"bash", "sh"}
+	var detectedShell string
+
+	for _, shell := range validShells {
+		// 使用快速命令检测shell是否存在
+		req := k8sClient.CoreV1().RESTClient().Post().
+			Resource("pods").
+			Name(pod).
+			Namespace(namespace).
+			SubResource("exec")
+
+		req.VersionedParams(&corev1.PodExecOptions{
+			Container: container,
+			Command:   []string{"which", shell},
+			Stdin:     false,
+			Stdout:    true,
+			Stderr:    false,
+			TTY:       false,
+		}, scheme.ParameterCodec)
+
+		exec, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
+		if err != nil {
+			continue
+		}
+
+		// 快速检测shell是否存在
+		var stdout bytes.Buffer
+		err = exec.Stream(remotecommand.StreamOptions{
+			Stdout: &stdout,
+		})
+
+		if err == nil && stdout.String() != "" {
+			detectedShell = shell
+			break
+		}
+	}
+
+	// 如果没有检测到，使用默认shell
+	if detectedShell == "" {
+		detectedShell = "sh"
+	}
+
+	// 更新缓存
+	shellCacheMux.Lock()
+	shellCacheMap[cacheKey] = &ShellCache{
+		shell:     detectedShell,
+		timestamp: time.Now(),
+	}
+	shellCacheMux.Unlock()
+
+	klog.V(2).Infof("Detected shell for %s: %s", cacheKey, detectedShell)
+	return detectedShell, nil
+}
+
 // 处理客户端发来的ws建立请求
 func handleTerminalSession(session sockjs.Session) {
 	var (
@@ -158,7 +241,7 @@ func handleTerminalSession(session sockjs.Session) {
 		ts := TerminalSession{
 			id:            tr.SessionId,
 			sockJSSession: session,
-			sizeChan:      make(chan remotecommand.TerminalSize),
+			sizeChan:      make(chan remotecommand.TerminalSize, 10), // 增加缓冲区大小
 		}
 		go WaitForTerminal(manager.Client, manager.Config, ts, tr.Namespace, tr.Pod, tr.Container, "")
 		return
@@ -314,24 +397,19 @@ func isValidShell(validShells []string, shell string) bool {
 	return false
 }
 
-// WaitForTerminal 等待并启动一个终端会话，如果指定的 shell 有效，启动指定 shell 的进程。
-// 如果指定的 shell 无效，则尝试使用有效的 shell（如 bash 或 sh）启动终端会话。
-// 如果启动过程成功，关闭终端会话，否则返回错误信息。
+// WaitForTerminal 等待并启动一个终端会话，使用预检测的shell优化性能
 func WaitForTerminal(k8sClient *kubernetes.Clientset, cfg *rest.Config, ts TerminalSession, namespace, pod, container, cmd string) {
 	var err error
-	// 定义 shell 类型
-	validShells := []string{"bash", "sh"}
 
-	if isValidShell(validShells, cmd) {
+	if cmd != "" && isValidShell([]string{"bash", "sh"}, cmd) {
+		// 使用指定的shell
 		cmds := []string{cmd}
 		err = startProcess(k8sClient, cfg, cmds, ts, namespace, pod, container)
 	} else {
-		for _, testShell := range validShells {
-			cmd := []string{testShell}
-			if err = startProcess(k8sClient, cfg, cmd, ts, namespace, pod, container); err == nil {
-				break
-			}
-		}
+		// 使用预检测的shell，避免重复尝试
+		shell, _ := preCheckShell(k8sClient, cfg, namespace, pod, container)
+		cmds := []string{shell}
+		err = startProcess(k8sClient, cfg, cmds, ts, namespace, pod, container)
 	}
 
 	if err != nil {
@@ -342,4 +420,21 @@ func WaitForTerminal(k8sClient *kubernetes.Clientset, cfg *rest.Config, ts Termi
 
 	// 启动成功，关闭终端并返回 "Process exited"
 	ts.Close(1, "Process exited")
+}
+
+// 清理过期的shell缓存
+func CleanupShellCache() {
+	ticker := time.NewTicker(10 * time.Minute)
+	go func() {
+		for range ticker.C {
+			shellCacheMux.Lock()
+			now := time.Now()
+			for key, cache := range shellCacheMap {
+				if now.Sub(cache.timestamp) > shellCacheTTL {
+					delete(shellCacheMap, key)
+				}
+			}
+			shellCacheMux.Unlock()
+		}
+	}()
 }

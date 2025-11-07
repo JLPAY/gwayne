@@ -2,15 +2,16 @@ package node
 
 import (
 	"fmt"
+	"net/http"
+	"regexp"
+	"sync"
+
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/node"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
-	"net/http"
-	"regexp"
-	"sync"
 )
 
 // 用于表示标签的结构
@@ -564,4 +565,206 @@ func validateLabel(key, value string) error {
 	}
 
 	return nil
+}
+
+// Cordon 隔离节点
+// @router /:name/clusters/:cluster/cordon [put]
+func Cordon(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+
+	client, err := client.Client(cluster)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "获取集群客户端失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 获取当前节点信息
+	currentNode, err := node.GetNodeByName(client, name)
+	if err != nil {
+		klog.Errorf("Failed to get node %s: %v", name, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点不存在: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 检查节点是否已经被隔离
+	if currentNode.Spec.Unschedulable {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点已经被隔离",
+			},
+		})
+		return
+	}
+
+	// 设置节点为不可调度（隔离）
+	currentNode.Spec.Unschedulable = true
+
+	// 更新节点
+	result, err := node.UpdateNode(client, currentNode)
+	if err != nil {
+		klog.Errorf("Failed to cordon node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点隔离失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"message": "节点隔离成功",
+			"node":    result,
+		},
+	})
+}
+
+// Cordon 隔离节点
+// @router /:name/clusters/:cluster/cordon [put]
+func UnCordon(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+
+	client, err := client.Client(cluster)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "获取集群客户端失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 获取当前节点信息
+	currentNode, err := node.GetNodeByName(client, name)
+	if err != nil {
+		klog.Errorf("Failed to get node %s: %v", name, err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点不存在: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 检查节点是否已经被隔离
+	if !currentNode.Spec.Unschedulable {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点未被隔离，无需解除隔离",
+			},
+		})
+		return
+	}
+
+	// 设置节点为不可调度（隔离）
+	currentNode.Spec.Unschedulable = false
+
+	// 更新节点
+	result, err := node.UpdateNode(client, currentNode)
+	if err != nil {
+		klog.Errorf("Failed to cordon node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点解除隔离失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"message": "节点解除隔离成功",
+			"node":    result,
+		},
+	})
+}
+
+// 删除重复的DrainOptions定义，使用pkg中的类型
+
+// DrainNode 驱逐节点上的所有Pod
+// @router /:name/clusters/:cluster/drain [post]
+func DrainNode(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+
+	// 解析请求体
+	var drainOptions node.DrainOptions
+	if err := c.ShouldBindJSON(&drainOptions); err != nil {
+		klog.Errorf("Failed to parse drain options: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "error",
+			"data": gin.H{
+				"message": "驱逐选项解析失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	client, err := client.Client(cluster)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "获取集群客户端失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 执行节点驱逐
+	err = node.DrainNode(client, name, &drainOptions)
+	if err != nil {
+		klog.Errorf("Failed to drain node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "error",
+			"data": gin.H{
+				"message": "节点驱逐失败: " + err.Error(),
+			},
+		})
+		return
+	}
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "success",
+		"data": gin.H{
+			"message": "节点驱逐成功",
+		},
+	})
 }

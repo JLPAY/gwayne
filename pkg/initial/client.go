@@ -1,9 +1,10 @@
 package initial
 
 import (
+	"time"
+
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"time"
 )
 
 func InitClient() {
