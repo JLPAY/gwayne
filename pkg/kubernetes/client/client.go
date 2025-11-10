@@ -82,24 +82,32 @@ func BuildApiserverClient() {
 			clientSet, config, err := buildClient(cluster.Master, cluster.KubeConfig)
 			if err != nil {
 				klog.Errorf("failed to build client for cluster %s: %v", cluster.Name, err)
+				// 初始化失败，删除部分初始化的 ClusterManager
+				clusterManagerSets.Delete(cluster.Name)
 				return
 			}
 
 			dynamicClient, err := dynamic.NewForConfig(config)
 			if err != nil {
 				klog.Errorf("failed to create dynamic client for cluster %s: %v", cluster.Name, err)
+				// 初始化失败，删除部分初始化的 ClusterManager
+				clusterManagerSets.Delete(cluster.Name)
 				return
 			}
 
 			crdClient, err := apiextensionsclientset.NewForConfig(config)
 			if err != nil {
 				klog.Errorf("failed to create crdClient for cluster %s: %v", cluster.Name, err)
+				// 初始化失败，删除部分初始化的 ClusterManager
+				clusterManagerSets.Delete(cluster.Name)
 				return
 			}
 
 			cacheFactory, err := buildCacheController(clientSet, cluster.Name)
 			if err != nil {
 				klog.Errorf("failed to build cache controller for cluster %s: %v", cluster.Name, err)
+				// 初始化失败，删除部分初始化的 ClusterManager
+				clusterManagerSets.Delete(cluster.Name)
 				return
 			}
 

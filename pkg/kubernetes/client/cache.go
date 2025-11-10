@@ -78,26 +78,44 @@ func ensureInformerStarted(factory informers.SharedInformerFactory, stopCh chan 
 }
 
 func (c *CacheFactory) PodLister() corev1.PodLister {
+	if c == nil || c.sharedInformerFactory == nil {
+		return nil
+	}
 	return c.sharedInformerFactory.Core().V1().Pods().Lister()
 }
 
 func (c *CacheFactory) EventLister() corev1.EventLister {
+	if c == nil || c.sharedInformerFactory == nil {
+		return nil
+	}
 	return c.sharedInformerFactory.Core().V1().Events().Lister()
 }
 
 func (c *CacheFactory) DeploymentLister() appsv1.DeploymentLister {
+	if c == nil || c.sharedInformerFactory == nil {
+		return nil
+	}
 	return c.sharedInformerFactory.Apps().V1().Deployments().Lister()
 }
 
 func (c *CacheFactory) NodeLister() corev1.NodeLister {
+	if c == nil || c.sharedInformerFactory == nil {
+		return nil
+	}
 	return c.sharedInformerFactory.Core().V1().Nodes().Lister()
 }
 
 func (c *CacheFactory) EndpointLister() corev1.EndpointsLister {
+	if c == nil || c.sharedInformerFactory == nil {
+		return nil
+	}
 	return c.sharedInformerFactory.Core().V1().Endpoints().Lister()
 }
 
 func (c *CacheFactory) HPALister() autoscalingv1.HorizontalPodAutoscalerLister {
+	if c == nil || c.sharedInformerFactory == nil {
+		return nil
+	}
 	return c.sharedInformerFactory.Autoscaling().V1().HorizontalPodAutoscalers().Lister()
 }
 

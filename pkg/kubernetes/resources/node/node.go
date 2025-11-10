@@ -66,7 +66,14 @@ type NodeStatus struct {
 }
 
 func GetNodeCounts(indexer *client.CacheFactory) (int, error) {
-	nodeList, err := indexer.NodeLister().List(labels.Everything())
+	if indexer == nil {
+		return 0, fmt.Errorf("CacheFactory is nil")
+	}
+	nodeLister := indexer.NodeLister()
+	if nodeLister == nil {
+		return 0, fmt.Errorf("NodeLister is nil, CacheFactory may not be fully initialized")
+	}
+	nodeList, err := nodeLister.List(labels.Everything())
 	if err != nil {
 		return 0, err
 	}
@@ -74,7 +81,14 @@ func GetNodeCounts(indexer *client.CacheFactory) (int, error) {
 }
 
 func ListNode(indexer *client.CacheFactory) (*NodeListResult, error) {
-	nodeList, err := indexer.NodeLister().List(labels.Everything())
+	if indexer == nil {
+		return nil, fmt.Errorf("CacheFactory is nil")
+	}
+	nodeLister := indexer.NodeLister()
+	if nodeLister == nil {
+		return nil, fmt.Errorf("NodeLister is nil, CacheFactory may not be fully initialized")
+	}
+	nodeList, err := nodeLister.List(labels.Everything())
 	if err != nil {
 		return nil, err
 	}

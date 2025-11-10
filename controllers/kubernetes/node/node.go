@@ -39,6 +39,11 @@ func NodeStatistics(c *gin.Context) {
 		managers.Range(func(key, value interface{}) bool {
 			manager := value.(*client.ClusterManager)
 			clu := key.(string)
+			// 检查 CacheFactory 是否已初始化
+			if manager.CacheFactory == nil {
+				klog.Warningf("CacheFactory is nil for cluster %s, skipping", clu)
+				return true
+			}
 			wg.Add(1)
 			go func(clu string, manager *client.ClusterManager) {
 				defer wg.Done()
@@ -71,6 +76,13 @@ func NodeStatistics(c *gin.Context) {
 		manager, err := client.Manager(cluster)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid cluster"})
+			return
+		}
+
+		// 检查 CacheFactory 是否已初始化
+		if manager.CacheFactory == nil {
+			klog.Errorf("CacheFactory is nil for cluster %s", cluster)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "CacheFactory is not initialized for this cluster"})
 			return
 		}
 
