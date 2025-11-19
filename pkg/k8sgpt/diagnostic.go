@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
+	"github.com/k8sgpt-ai/k8sgpt/pkg/ai"
 	"github.com/k8sgpt-ai/k8sgpt/pkg/analysis"
 	k8sgptk8s "github.com/k8sgpt-ai/k8sgpt/pkg/kubernetes"
+	"github.com/spf13/viper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	k8sclient "k8s.io/client-go/kubernetes"
@@ -205,6 +207,36 @@ func (s *DiagnosticService) Diagnose(ctx context.Context, req DiagnosticRequest)
 
 	// 创建分析实例
 	explain := req.Explain && backend != ""
+	
+	// 在调用 k8sgpt 的 NewAnalysis 之前，临时设置 viper 的 "ai" 配置
+	// 这样可以确保 k8sgpt 能够正确读取配置，同时避免配置被意外清空
+	if explain && backend != "" {
+		// 获取当前的 AI 配置
+		aiConfig, err := s.aiManager.ListProviders()
+		if err == nil {
+			// 将我们的配置格式转换为 k8sgpt 期望的格式
+			k8sgptAIConfig := convertToK8sGPTAIConfig(aiConfig)
+			// 临时设置 k8sgpt 格式的配置（只设置内存中的配置，不写入文件）
+			viper.Set("ai", k8sgptAIConfig)
+		}
+	}
+	
+	// 确保在函数返回前恢复原始配置
+	// 这样可以防止 k8sgpt 的代码修改或清空我们的配置
+	defer func() {
+		if explain && backend != "" {
+			// 重新从我们的配置管理器读取并设置配置
+			// 这样可以确保配置不会被 k8sgpt 的代码意外修改或清空
+			aiConfig, err := s.aiManager.ListProviders()
+			if err == nil {
+				k8sgptAIConfig := convertToK8sGPTAIConfig(aiConfig)
+				viper.Set("ai", k8sgptAIConfig)
+				// 重要：不要调用 viper.WriteConfig()，避免覆盖配置文件
+				// viper.Set() 只是设置内存中的配置，不会写入文件
+			}
+		}
+	}()
+	
 	analysisInstance, err := analysis.NewAnalysis(
 		backend,
 		language,
@@ -658,6 +690,35 @@ func checkIngressAPISupport(ctx context.Context, k8sGPTClient *k8sgptk8s.Client)
 	}
 
 	return nil
+}
+
+// convertToK8sGPTAIConfig 将我们的 AI 配置格式转换为 k8sgpt 期望的格式
+func convertToK8sGPTAIConfig(config AIConfiguration) ai.AIConfiguration {
+	k8sgptProviders := make([]ai.AIProvider, 0, len(config.Providers))
+	for _, p := range config.Providers {
+		k8sgptProviders = append(k8sgptProviders, ai.AIProvider{
+			Name:           p.Name,
+			Model:          p.Model,
+			Password:       p.Password,
+			BaseURL:        p.BaseURL,
+			ProxyEndpoint:  p.ProxyEndpoint,
+			ProxyPort:      p.ProxyPort,
+			EndpointName:   p.EndpointName,
+			Engine:         p.Engine,
+			Temperature:    p.Temperature,
+			ProviderRegion: p.ProviderRegion,
+			ProviderId:     p.ProviderId,
+			CompartmentId:  p.CompartmentId,
+			TopP:           p.TopP,
+			TopK:           p.TopK,
+			MaxTokens:      p.MaxTokens,
+			OrganizationId: p.OrganizationId,
+		})
+	}
+	return ai.AIConfiguration{
+		Providers:       k8sgptProviders,
+		DefaultProvider: config.DefaultProvider,
+	}
 }
 
 // buildK8sGPTClient 构建 k8sgpt 的 Kubernetes 客户端
