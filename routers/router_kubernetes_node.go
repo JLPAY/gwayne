@@ -52,5 +52,8 @@ func SetupKubernetesNodeRoutes(rg *gin.RouterGroup) {
 
 		// 获取节点统计信息
 		nodeGroup.GET("/statistics", node.NodeStatistics)
+
+		// 诊断节点
+		nodeGroup.GET("/:name/clusters/:cluster/diagnose", node.Diagnose)
 	}
 }

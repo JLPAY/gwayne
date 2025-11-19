@@ -1,11 +1,13 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
 	"sync"
 
+	"github.com/JLPAY/gwayne/pkg/k8sgpt"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/node"
 	"github.com/gin-gonic/gin"
@@ -766,5 +768,34 @@ func DrainNode(c *gin.Context) {
 		"data": gin.H{
 			"message": "节点驱逐成功",
 		},
+	})
+}
+
+// Diagnose 诊断节点
+// @router /:name/clusters/:cluster/diagnose [get]
+func Diagnose(c *gin.Context) {
+	name := c.Param("name")
+	cluster := c.Param("cluster")
+	explain := c.DefaultQuery("explain", "true") == "true"
+
+	if name == "" || cluster == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "node name and cluster are required",
+		})
+		return
+	}
+
+	diagnosticService := k8sgpt.NewDiagnosticService()
+	result, err := diagnosticService.DiagnoseNode(context.Background(), cluster, name, explain)
+	if err != nil {
+		klog.Errorf("Failed to diagnose node %s: %v", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
 	})
 }

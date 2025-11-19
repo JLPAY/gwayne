@@ -1,9 +1,11 @@
 package pod
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/JLPAY/gwayne/controllers/base"
+	"github.com/JLPAY/gwayne/pkg/k8sgpt"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	pod "github.com/JLPAY/gwayne/pkg/kubernetes/resources/pod"
 	"github.com/gin-gonic/gin"
@@ -54,4 +56,34 @@ func List(c *gin.Context) {
 	// 返回成功响应
 	c.JSON(200, gin.H{"data": result})
 
+}
+
+// Diagnose 诊断 Pod
+// @router /namespaces/:namespace/clusters/:cluster/diagnose [get]
+func Diagnose(c *gin.Context) {
+	cluster := c.Param("cluster")
+	namespace := c.Param("namespace")
+	podName := c.Query("name")
+	explain := c.DefaultQuery("explain", "true") == "true"
+
+	if cluster == "" || namespace == "" || podName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "cluster, namespace and pod name are required",
+		})
+		return
+	}
+
+	diagnosticService := k8sgpt.NewDiagnosticService()
+	result, err := diagnosticService.DiagnosePod(context.Background(), cluster, namespace, podName, explain)
+	if err != nil {
+		klog.Errorf("Failed to diagnose pod %s/%s: %v", namespace, podName, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
+	})
 }

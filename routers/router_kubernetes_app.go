@@ -35,6 +35,9 @@ func SetupKubernetesAppRoutes(rg *gin.RouterGroup) {
 		appGroup.POST("/pods/:pod/terminal/namespaces/:namespace/clusters/:cluster", pod.Terminal)
 
 		appGroup.GET("/podlogs/:pod/containers/:container/namespaces/:namespace/clusters/:cluster", pod.ListLogs)
+		
+		// 诊断 Pod
+		appGroup.GET("/pods/namespaces/:namespace/clusters/:cluster/diagnose", pod.Diagnose)
 		appGroup.GET("/events")
 	}
 
