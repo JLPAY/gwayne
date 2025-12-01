@@ -1,9 +1,11 @@
 package configs
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 type ResponseResult struct {
@@ -26,7 +28,20 @@ func ListBase(c *gin.Context) {
 
 	// 登录框标题
 	configMap["system.title"] = "gwayne"
-	configMap["system.oauth2-title"] = "GitHub Login"
+	// 使用 OAuth2 Name 配置生成标题
+	if config.Conf.Auth.Oauth2.Enabled {
+		oauth2Name := config.Conf.Auth.Oauth2.Name
+		if oauth2Name == "" {
+			oauth2Name = "oauth2"
+		}
+		// 返回 OAuth2 服务名称
+		configMap["oauth2Name"] = oauth2Name
+		// 将名称首字母大写，然后加上 " Login"
+		oauth2Title := strings.ToUpper(oauth2Name[:1]) + oauth2Name[1:] + " Login"
+		configMap["system.oauth2-title"] = oauth2Title
+	} else {
+		configMap["system.oauth2-title"] = "OAuth 2.0 Login"
+	}
 	configMap["system.api-name-generate-rule"] = "join"
 
 	data := ResponseResult{configMap}

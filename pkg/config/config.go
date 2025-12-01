@@ -54,6 +54,7 @@ type Auth struct {
 
 type Oauth2Conf struct {
 	Enabled      bool   `ini:"Enabled"`
+	Name         string `ini:"Name"` // OAuth2 服务名称，用于区分多个认证服务
 	ClientId     string `ini:"ClientId"`
 	ClientSecret string `ini:"ClientSecret"`
 	RedirectURL  string `ini:"RedirectURL"`

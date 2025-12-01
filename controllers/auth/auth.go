@@ -2,6 +2,10 @@ package auth
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
 	"github.com/JLPAY/gwayne/models"
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/myoauth2"
@@ -10,9 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 	"k8s.io/klog/v2"
-	"net/http"
-	"strings"
-	"time"
 )
 
 // Authenticator 定义了认证器的接口
@@ -59,7 +60,7 @@ func Login(c *gin.Context) {
 	// 从 URL 中获取认证类型
 	authType := c.Param("type")
 	oauth2Name := c.Param("name")
-	next := c.Param("next")
+	next := c.Query("next") // 修复：使用 Query 获取查询参数，而不是 Param
 	//state := c.DefaultQuery("state", "5x2zlMe")
 
 	klog.Info("next:", next)
@@ -134,12 +135,30 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// 如果是 OAuth2 登录，重定向到前端
+	if authType == models.AuthTypeOAuth2 {
+		if next != "" {
+			// 将 token 作为 sid 参数附加到回调 URL
+			// 检查 next 是否已经包含查询参数
+			separator := "?"
+			if strings.Contains(next, "?") {
+				separator = "&"
+			}
+			redirectURL := fmt.Sprintf("%s%ssid=%s", next, separator, apiToken)
+			klog.Infof("OAuth2 login success, redirecting to: %s", redirectURL)
+			c.Redirect(http.StatusFound, redirectURL)
+			return
+		}
+		// 如果没有 next 参数，返回 JSON（向后兼容）
+		klog.Warning("OAuth2 login success but no next parameter, returning JSON")
+	}
+
+	// 其他登录方式返回 JSON
 	loginResponse := LoginResponse{
 		Data: LoginToken{
 			Token: apiToken,
 		},
 	}
-
 	c.JSON(http.StatusOK, loginResponse)
 }
 
