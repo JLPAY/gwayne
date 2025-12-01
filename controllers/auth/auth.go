@@ -12,7 +12,6 @@ import (
 	"github.com/JLPAY/gwayne/pkg/rsakey"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
-	"golang.org/x/oauth2"
 	"k8s.io/klog/v2"
 )
 
@@ -60,13 +59,16 @@ func Login(c *gin.Context) {
 	// 从 URL 中获取认证类型
 	authType := c.Param("type")
 	oauth2Name := c.Param("name")
-	next := c.Query("next") // 修复：使用 Query 获取查询参数，而不是 Param
-	//state := c.DefaultQuery("state", "5x2zlMe")
+	next := c.Query("next")   // 用于初始请求
+	state := c.Query("state") // OAuth2 回调时的 state 参数
 
-	klog.Info("next:", next)
+	klog.Infof("Login request - authType: %s, oauth2Name: %s, next: %s, state: %s", authType, oauth2Name, next, state)
 
-	// 如果认证类型为空或用户名为 'admin'，默认使用数据库认证
-	if authType == "" || loginData.Username == "admin" {
+	// 如果是 OAuth2 认证，直接处理，不进行默认转换
+	// 如果认证类型为空且不是 OAuth2，或用户名为 'admin'，默认使用数据库认证
+	if authType == models.AuthTypeOAuth2 {
+		// OAuth2 认证，保持 authType 不变
+	} else if authType == "" || loginData.Username == "admin" {
 		authType = models.AuthTypeDB
 	}
 
@@ -87,23 +89,45 @@ func Login(c *gin.Context) {
 	}
 
 	if authType == models.AuthTypeOAuth2 {
+		// 如果 oauth2Name 为空，尝试使用默认值
+		if oauth2Name == "" {
+			oauth2Name = config.Conf.Auth.Oauth2.Name
+			if oauth2Name == "" {
+				oauth2Name = "oauth2"
+			}
+		}
+
 		oauther, ok := myoauth2.OAutherMap[oauth2Name]
 		if !ok {
-			klog.Warningf("oauth2 type (%s) is not supported . ", oauth2Name)
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的认证类型 (%s)", oauth2Name)})
+			klog.Errorf("OAuth2 service '%s' not found in OAutherMap. Available services: %v", oauth2Name, getOAuth2ServiceNames())
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的 OAuth2 服务 (%s)", oauth2Name)})
 			return
 		}
+
 		// 获取回调授权码
 		code := c.DefaultQuery("code", "")
+		klog.Infof("OAuth2 login - code: %s, oauth2Name: %s, state: %s", code, oauth2Name, state)
+
 		if code == "" {
 			// 如果没有获取到 code，重定向到 OAuth2 授权 URL
-			// 生成 OAuth2 授权 URL
-			authURL := oauther.AuthCodeURL(next, oauth2.AccessTypeOnline)
-			// 打印出生成的跳转 URL
-			klog.Info("Redirecting to URL: ", authURL)
+			// 生成 OAuth2 授权 URL，使用 next 作为 state 参数
+			// 注意：不传递 oauth2.AccessTypeOnline，因为这不是标准 OAuth2 参数，某些提供商不支持
+			authURL := oauther.AuthCodeURL(next)
+			// 打印出详细的调试信息
+			klog.Infof("OAuth2 authorization request details:")
+			klog.Infof("  - OAuth2 service: %s", oauth2Name)
+			klog.Infof("  - State parameter: %s", next)
+			klog.Infof("  - Generated auth URL: %s", authURL)
+			klog.Infof("  - Redirecting to OAuth2 provider...")
 
-			c.Redirect(http.StatusFound, oauther.AuthCodeURL(next, oauth2.AccessTypeOnline))
+			c.Redirect(http.StatusFound, authURL)
 			return
+		}
+
+		// 如果有 code，说明是 OAuth2 回调，使用 state 参数作为回调 URL
+		if state != "" {
+			next = state
+			klog.Infof("OAuth2 callback received, using state as next URL: %s", next)
 		}
 
 		authModel.OAuth2Code = code
@@ -113,8 +137,15 @@ func Login(c *gin.Context) {
 	// 调用认证方法
 	user, err := authenticator.Authenticate(authModel)
 	if err != nil {
+		klog.Errorf("OAuth2 authentication failed: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 打印认证成功后的用户信息
+	if authType == models.AuthTypeOAuth2 {
+		klog.Infof("OAuth2 authentication successful - User: Name=%s, Email=%s, Display=%s, Admin=%v",
+			user.Name, user.Email, user.Display, user.Admin)
 	}
 
 	// 更新用户登录信息
@@ -123,8 +154,15 @@ func Login(c *gin.Context) {
 	user.LastLogin = &now // 确保这是一个有效的指针
 	user, err = models.EnsureUser(user)
 	if err != nil {
+		klog.Errorf("Failed to ensure user in database: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 打印更新后的用户信息
+	if authType == models.AuthTypeOAuth2 {
+		klog.Infof("OAuth2 user saved/updated - User ID: %d, Name: %s, Email: %s, LastLogin: %v, LastIp: %s",
+			user.Id, user.Name, user.Email, user.LastLogin, user.LastIp)
 	}
 
 	// 生成JWT
@@ -218,4 +256,13 @@ func generateJWT(user *models.User) (string, error) {
 	})
 
 	return token.SignedString(rsakey.RsaPrivateKey)
+}
+
+// 获取所有已注册的 OAuth2 服务名称（用于调试）
+func getOAuth2ServiceNames() []string {
+	names := make([]string, 0, len(myoauth2.OAutherMap))
+	for name := range myoauth2.OAutherMap {
+		names = append(names, name)
+	}
+	return names
 }

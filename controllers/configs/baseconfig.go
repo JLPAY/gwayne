@@ -36,6 +36,8 @@ func ListBase(c *gin.Context) {
 		}
 		// 返回 OAuth2 服务名称
 		configMap["oauth2Name"] = oauth2Name
+		// 返回 OAuth2 RedirectURL，用于前端跳转到后端
+		configMap["oauth2RedirectURL"] = config.Conf.Auth.Oauth2.RedirectURL
 		// 将名称首字母大写，然后加上 " Login"
 		oauth2Title := strings.ToUpper(oauth2Name[:1]) + oauth2Name[1:] + " Login"
 		configMap["system.oauth2-title"] = oauth2Title

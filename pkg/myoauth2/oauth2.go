@@ -74,10 +74,25 @@ func NewOAuth2Service() {
 	}
 
 	// 加载 OAuth2 配置信息
+	// 解析 Scopes，如果为空或只有空白字符，则使用空数组
+	scopes := []string{}
+	if config.Conf.Auth.Oauth2.Scopes != "" {
+		scopesStr := strings.TrimSpace(config.Conf.Auth.Oauth2.Scopes)
+		if scopesStr != "" {
+			scopesList := strings.Split(scopesStr, ",")
+			for _, scope := range scopesList {
+				scope = strings.TrimSpace(scope)
+				if scope != "" {
+					scopes = append(scopes, scope)
+				}
+			}
+		}
+	}
+
 	info := &OAuth2Info{
 		ClientId:     config.Conf.Auth.Oauth2.ClientId,
 		ClientSecret: config.Conf.Auth.Oauth2.ClientSecret,
-		Scopes:       strings.Split(config.Conf.Auth.Oauth2.Scopes, ","),
+		Scopes:       scopes,
 		AuthUrl:      config.Conf.Auth.Oauth2.AuthURL,
 		TokenUrl:     config.Conf.Auth.Oauth2.TokenURL,
 		ApiUrl:       config.Conf.Auth.Oauth2.ApiURL,
