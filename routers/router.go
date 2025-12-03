@@ -60,6 +60,9 @@ func InitRouter() *gin.Engine {
 
 		SetupKubernetesAppRoutes(apiV1)
 
+		// K8sGPT相关路由
+		SetupK8sGPTRoutes(apiV1)
+
 	}
 
 	return r

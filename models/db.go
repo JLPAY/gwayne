@@ -2,14 +2,15 @@ package models
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"time"
+
 	"github.com/JLPAY/gwayne/pkg/config"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"k8s.io/klog/v2"
-	"log"
-	"os"
-	"time"
 )
 
 // DB 数据库链接单例
@@ -86,6 +87,7 @@ func dbAutoMigrate() error {
 	err := DB.AutoMigrate(
 		&User{},
 		&Cluster{},
+		&AIBackend{},
 		/*&model.Role{},
 		&model.Group{},
 		&model.Menu{},
