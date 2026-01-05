@@ -46,6 +46,7 @@ type TerminalSession struct {
 	commandBuffer  string                          // 命令缓冲区，用于累积完整命令
 	lastCommand    string                          // 上一个命令，用于防止重复执行被拦截的命令
 	commandBlocked bool                            // 标记上一个命令是否被拦截
+	initialized    bool                            // 标记终端是否已初始化
 }
 
 // TerminalMessage 定义了客户端发送的终端消息结构
@@ -106,7 +107,10 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 	switch msg.Op {
 	case "stdin":
 		// 命令拦截检查
-		if t.user != nil && !t.user.Admin {
+		// 对于非管理员用户（包括 user is nil 的情况），都需要进行命令检查
+		needCheck := t.user == nil || !t.user.Admin
+
+		if needCheck {
 			// 检查是否输入了换行符（命令结束）
 			hasNewline := strings.Contains(msg.Data, "\n") || strings.Contains(msg.Data, "\r")
 
@@ -117,14 +121,42 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 				// 提取完整命令（去除换行符和前后空格）
 				command := strings.TrimSpace(strings.TrimRight(t.commandBuffer, "\n\r"))
 
+				userName := "unknown"
+				if t.user != nil {
+					userName = t.user.Name
+				}
 				klog.Infof("Terminal command detected: '%s' (user: %s, admin: %v, sessionId: %s)",
-					command, t.user.Name, t.user.Admin, t.id)
+					command, userName, t.user != nil && t.user.Admin, t.id)
 
 				// 如果命令为空，允许通过（用于清屏等操作）
 				if command == "" {
 					t.commandBuffer = ""
 					t.commandBlocked = false
 					t.lastCommand = ""
+					// 只发送换行符，不重复发送命令
+					return copy(p, msg.Data), nil
+				}
+
+				// 终端初始化命令：允许通过，不进行拦截检查
+				// 前端会发送 "echo wayne-init" 来检测终端是否就绪
+				if command == "echo wayne-init" || strings.HasPrefix(command, "echo wayne-init") {
+					klog.V(3).Infof("Terminal initialization command detected: '%s', allowing without check", command)
+					t.initialized = true
+					t.lastCommand = command
+					t.commandBlocked = false
+					t.commandBuffer = ""
+					// 只发送换行符，不重复发送命令
+					return copy(p, msg.Data), nil
+				}
+
+				// 处理历史命令：bash 历史命令以 ! 开头（如 !123, !!, !-1 等）
+				// 历史命令会在 shell 内部展开，我们无法在 WebSocket 层面拦截实际命令
+				// 对于历史命令，暂时允许执行（因为无法知道实际要执行的命令）
+				if strings.HasPrefix(command, "!") {
+					klog.V(3).Infof("Terminal command is a history command: '%s', allowing (cannot check actual command)", command)
+					t.lastCommand = command
+					t.commandBlocked = false
+					t.commandBuffer = ""
 					// 只发送换行符，不重复发送命令
 					return copy(p, msg.Data), nil
 				}
@@ -142,9 +174,9 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 					return 0, nil
 				}
 
-				// 检查命令是否被禁止
+				// 检查命令是否被禁止（user 为 nil 时，按普通用户处理）
 				if err := checkCommandPermission(t.user, command); err != nil {
-					klog.Warningf("Command blocked: '%s' for user %s, reason: %v", command, t.user.Name, err)
+					klog.Warningf("Command blocked: '%s' for user %s, reason: %v", command, userName, err)
 
 					// 命令字符可能已经发送到容器，需要清除容器输入缓冲区
 					// 发送 Ctrl+U (清除到行首) 来清除已输入的命令
@@ -193,7 +225,7 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 				}
 
 				// 命令通过检查
-				klog.Infof("Terminal command allowed: '%s' for user %s", command, t.user.Name)
+				klog.Infof("Terminal command allowed: '%s' for user %s", command, userName)
 				t.lastCommand = command
 				t.commandBlocked = false
 				t.commandBuffer = ""
@@ -202,14 +234,17 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 			} else {
 				// 命令还在输入中，累积到缓冲区并实时发送数据让用户看到输入
 				t.commandBuffer += msg.Data
+				userName := "unknown"
+				if t.user != nil {
+					userName = t.user.Name
+				}
 				klog.V(3).Infof("Terminal Read stdin: user=%s, buffer='%s', new data='%s'",
-					t.user.Name, t.commandBuffer, strings.ReplaceAll(msg.Data, "\n", "\\n"))
+					userName, t.commandBuffer, strings.ReplaceAll(msg.Data, "\n", "\\n"))
 				// 实时发送数据，让用户看到输入
 				return copy(p, msg.Data), nil
 			}
-		} else if t.user == nil {
-			klog.Warningf("Terminal Read: user is nil, skipping command check (sessionId: %s)", t.id)
 		} else {
+			// 管理员用户，跳过命令检查
 			klog.V(3).Infof("Terminal Read: admin user %s, skipping command check", t.user.Name)
 		}
 		// 将客户端输入数据复制到 p 缓冲区并返回
@@ -316,24 +351,23 @@ func preCheckShell(k8sClient *kubernetes.Clientset, cfg *rest.Config, namespace,
 
 // checkCommandPermission 检查命令权限
 func checkCommandPermission(user *models.User, command string) error {
-	if user == nil {
-		klog.Warningf("checkCommandPermission: user is nil, allowing command")
-		return nil
-	}
-
-	if user.Admin {
-		// 管理员无限制
-		klog.V(3).Infof("checkCommandPermission: admin user, allowing command: %s", command)
-		return nil
-	}
-
-	// 确定用户角色
+	// 确定用户角色：user 为 nil 时，按普通用户处理
 	role := "user"
-	if user.Admin {
-		role = "admin"
+	userName := "unknown"
+	isAdmin := false
+
+	if user != nil {
+		userName = user.Name
+		isAdmin = user.Admin
+		if isAdmin {
+			// 管理员无限制
+			klog.V(3).Infof("checkCommandPermission: admin user, allowing command: %s", command)
+			return nil
+		}
+		role = "user"
 	}
 
-	klog.Infof("checkCommandPermission: checking command '%s' for user '%s' (role: %s)", command, user.Name, role)
+	klog.Infof("checkCommandPermission: checking command '%s' for user '%s' (role: %s)", command, userName, role)
 
 	// 获取该角色的规则
 	rules, err := models.GetEnabledRulesByRole(role)
@@ -354,12 +388,28 @@ func checkCommandPermission(user *models.User, command string) error {
 		return nil // 空命令允许
 	}
 
+	// 处理历史命令：bash 历史命令以 ! 开头（如 !123, !!, !-1 等）
+	// 历史命令会在 shell 内部展开，我们无法在 WebSocket 层面拦截实际命令
+	// 对于历史命令，暂时允许执行（因为无法知道实际要执行的命令）
+	if strings.HasPrefix(command, "!") {
+		klog.V(3).Infof("checkCommandPermission: history command '%s', allowing (cannot check actual command)", command)
+		return nil
+	}
+
 	// 提取命令的第一个单词（命令名）
 	commandParts := strings.Fields(command)
 	if len(commandParts) == 0 {
 		return nil
 	}
 	commandName := commandParts[0]
+
+	// 处理命令别名和复杂命令（如管道、重定向等）
+	// 对于管道命令（如 "ls | grep test"），只检查第一个命令
+	// 对于重定向（如 "echo test > file"），只检查命令本身
+	// 对于 && 或 || 连接的命令，只检查第一个命令
+	if idx := strings.IndexAny(commandName, "|&<>;"); idx > 0 {
+		commandName = commandName[:idx]
+	}
 
 	klog.Infof("checkCommandPermission: command='%s', commandName='%s', total rules=%d", command, commandName, len(rules))
 
@@ -547,6 +597,7 @@ func handleTerminalSession(session sockjs.Session) {
 			commandBuffer:  "",
 			lastCommand:    "",
 			commandBlocked: false,
+			initialized:    false,
 		}
 		go WaitForTerminal(manager.Client, manager.Config, ts, tr.Namespace, tr.Pod, tr.Container, "")
 		return
