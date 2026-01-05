@@ -107,13 +107,13 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 	case "stdin":
 		// 命令拦截检查
 		if t.user != nil && !t.user.Admin {
-			// 累积命令到缓冲区
-			t.commandBuffer += msg.Data
-
 			// 检查是否输入了换行符（命令结束）
 			hasNewline := strings.Contains(msg.Data, "\n") || strings.Contains(msg.Data, "\r")
 
 			if hasNewline {
+				// 累积命令到缓冲区（包括换行符）
+				t.commandBuffer += msg.Data
+
 				// 提取完整命令（去除换行符和前后空格）
 				command := strings.TrimSpace(strings.TrimRight(t.commandBuffer, "\n\r"))
 
@@ -125,6 +125,7 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 					t.commandBuffer = ""
 					t.commandBlocked = false
 					t.lastCommand = ""
+					// 只发送换行符，不重复发送命令
 					return copy(p, msg.Data), nil
 				}
 
@@ -195,13 +196,12 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 				klog.Infof("Terminal command allowed: '%s' for user %s", command, t.user.Name)
 				t.lastCommand = command
 				t.commandBlocked = false
-				// 发送完整数据（包括换行符），允许命令执行
-				dataToSend := t.commandBuffer
 				t.commandBuffer = ""
-				return copy(p, dataToSend), nil
+				// 只发送换行符，不重复发送命令（命令字符已经在输入时发送过了）
+				return copy(p, msg.Data), nil
 			} else {
-				// 命令还在输入中，实时发送数据让用户看到输入
-				// 注意：这里发送的数据会在容器中显示，但不会执行（因为没有换行符）
+				// 命令还在输入中，累积到缓冲区并实时发送数据让用户看到输入
+				t.commandBuffer += msg.Data
 				klog.V(3).Infof("Terminal Read stdin: user=%s, buffer='%s', new data='%s'",
 					t.user.Name, t.commandBuffer, strings.ReplaceAll(msg.Data, "\n", "\\n"))
 				// 实时发送数据，让用户看到输入
