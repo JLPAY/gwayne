@@ -141,6 +141,7 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/hupe1980/go-huggingface v0.0.15 // indirect
 	github.com/igm/sockjs-go v3.0.3+incompatible // indirect
