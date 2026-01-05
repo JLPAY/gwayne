@@ -84,10 +84,20 @@ func ConnMysql() *gorm.DB {
 
 // 自动迁移表结构
 func dbAutoMigrate() error {
+	// 先处理 terminal_command_rule 表的迁移（如果表已存在且列类型不匹配）
+	if err := migrateTerminalCommandRuleTable(); err != nil {
+		klog.Warningf("Failed to migrate terminal_command_rule table: %v", err)
+		// 如果迁移失败，尝试删除表重新创建
+		if err := DB.Exec("DROP TABLE IF EXISTS terminal_command_rule").Error; err != nil {
+			klog.Warningf("Failed to drop terminal_command_rule table: %v", err)
+		}
+	}
+
 	err := DB.AutoMigrate(
 		&User{},
 		&Cluster{},
 		&AIBackend{},
+		&TerminalCommandRule{},
 		/*&model.Role{},
 		&model.Group{},
 		&model.Menu{},
@@ -98,6 +108,44 @@ func dbAutoMigrate() error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+// migrateTerminalCommandRuleTable 迁移 terminal_command_rule 表
+func migrateTerminalCommandRuleTable() error {
+	// 检查表是否存在
+	var tableExists bool
+	err := DB.Raw("SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'terminal_command_rule'").Scan(&tableExists).Error
+	if err != nil {
+		return err
+	}
+
+	if !tableExists {
+		// 表不存在，直接返回，让 AutoMigrate 创建
+		return nil
+	}
+
+	// 检查 rule_type 列的类型
+	var columnType string
+	err = DB.Raw("SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'terminal_command_rule' AND column_name = 'rule_type'").Scan(&columnType).Error
+	if err != nil {
+		// 列不存在，直接返回
+		return nil
+	}
+
+	// 如果列类型不是 int 或 tinyint，需要转换
+	if columnType != "int" && columnType != "tinyint" && columnType != "smallint" && columnType != "mediumint" && columnType != "bigint" {
+		// 先删除表中的数据（因为类型转换可能导致数据丢失）
+		klog.Info("Converting terminal_command_rule.rule_type column from string to int, clearing existing data")
+		if err := DB.Exec("DELETE FROM terminal_command_rule").Error; err != nil {
+			return fmt.Errorf("failed to clear terminal_command_rule table: %v", err)
+		}
+		// 修改列类型
+		if err := DB.Exec("ALTER TABLE terminal_command_rule MODIFY COLUMN rule_type INT DEFAULT 0").Error; err != nil {
+			return fmt.Errorf("failed to alter rule_type column: %v", err)
+		}
+	}
+
 	return nil
 }
 
