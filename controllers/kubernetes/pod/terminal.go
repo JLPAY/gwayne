@@ -111,8 +111,12 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 	switch msg.Op {
 	case "stdin":
 		// 命令拦截检查
-		// 对于非管理员用户（包括 user is nil 的情况），都需要进行命令检查
-		needCheck := t.user == nil || !t.user.Admin
+		// 所有用户（包括 admin）都需要进行命令检查
+		// 但是 checkCommandPermission 函数会处理：
+		// - admin 用户如果没有 admin 角色的规则，则允许所有命令
+		// - 普通用户如果没有 user 角色的规则，则允许所有命令
+		// - 如果有规则，则按照规则检查
+		needCheck := true
 
 		if needCheck {
 			// 累积所有输入到缓冲区（用于调试）
@@ -728,14 +732,13 @@ func checkCommandPermission(user *models.User, command string) error {
 		userName = user.Name
 		isAdmin = user.Admin
 		if isAdmin {
-			// 管理员无限制
-			klog.V(3).Infof("checkCommandPermission: admin user, allowing command: %s", command)
-			return nil
+			role = "admin"
+		} else {
+			role = "user"
 		}
-		role = "user"
 	}
 
-	klog.Infof("checkCommandPermission: checking command '%s' for user '%s' (role: %s)", command, userName, role)
+	klog.Infof("checkCommandPermission: checking command '%s' for user '%s' (role: %s, isAdmin: %v)", command, userName, role, isAdmin)
 
 	// 检查命令是否匹配规则
 	command = strings.TrimSpace(command)
@@ -755,12 +758,18 @@ func checkCommandPermission(user *models.User, command string) error {
 	rules, err := models.GetEnabledRulesByRole(role)
 	if err != nil {
 		klog.Warningf("Failed to get command rules for role %s: %v", role, err)
-		return nil // 如果获取规则失败，允许执行（fail-open）
+		// 如果获取规则失败，对于 admin 用户允许执行（fail-open），对于普通用户也允许执行
+		return nil
 	}
 
 	// 如果没有规则，允许执行
+	// 特别地，对于 admin 用户，如果没有设置 admin 角色的规则，则完全不受限制
 	if len(rules) == 0 {
-		klog.V(3).Infof("checkCommandPermission: no rules for role %s, allowing command", role)
+		if isAdmin {
+			klog.V(3).Infof("checkCommandPermission: admin user '%s' has no rules configured, allowing all commands", userName)
+		} else {
+			klog.V(3).Infof("checkCommandPermission: no rules for role %s, allowing command", role)
+		}
 		return nil
 	}
 
