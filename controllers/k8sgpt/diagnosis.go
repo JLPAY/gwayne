@@ -23,11 +23,14 @@ func Analyze(c *gin.Context) {
 	var req AnalyzeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		klog.Errorf("解析请求体失败: %v", err)
+		errorMsg := "请求参数错误: " + err.Error()
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "请求参数错误: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -37,11 +40,14 @@ func Analyze(c *gin.Context) {
 	service, err := k8sgpt.NewK8sGPTService(req.BackendID)
 	if err != nil {
 		klog.Errorf("创建K8sGPT服务失败: %v", err)
+		errorMsg := "创建K8sGPT服务失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "创建K8sGPT服务失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -53,11 +59,14 @@ func Analyze(c *gin.Context) {
 	results, err := service.Analyze(ctx, req.ClusterName, req.Namespace, req.Filters)
 	if err != nil {
 		klog.Errorf("执行诊断分析失败: %v", err)
+		errorMsg := "执行诊断分析失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "执行诊断分析失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -92,11 +101,14 @@ func ListAnalyzers(c *gin.Context) {
 func AnalyzeByCluster(c *gin.Context) {
 	clusterName := c.Param("cluster")
 	if clusterName == "" {
+		errorMsg := "集群名称不能为空"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "集群名称不能为空",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -110,11 +122,14 @@ func AnalyzeByCluster(c *gin.Context) {
 		var err error
 		backendID, err = strconv.ParseInt(backendIDStr, 10, 64)
 		if err != nil {
+			errorMsg := "无效的backendID参数"
 			c.JSON(http.StatusBadRequest, gin.H{
 				"code":    400,
 				"message": "error",
+				"msg":     errorMsg,
+				"error":   errorMsg,
 				"data": gin.H{
-					"message": "无效的backendID参数",
+					"message": errorMsg,
 				},
 			})
 			return
@@ -128,11 +143,14 @@ func AnalyzeByCluster(c *gin.Context) {
 	service, err := k8sgpt.NewK8sGPTService(backendID)
 	if err != nil {
 		klog.Errorf("创建K8sGPT服务失败: %v", err)
+		errorMsg := "创建K8sGPT服务失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "创建K8sGPT服务失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -144,11 +162,14 @@ func AnalyzeByCluster(c *gin.Context) {
 	results, err := service.Analyze(ctx, clusterName, namespace, filters)
 	if err != nil {
 		klog.Errorf("执行诊断分析失败: %v", err)
+		errorMsg := "执行诊断分析失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "执行诊断分析失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return

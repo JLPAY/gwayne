@@ -19,7 +19,7 @@ func ListCommandRules(c *gin.Context) {
 	rules, err := models.GetAllTerminalCommandRules()
 	if err != nil {
 		klog.Errorf("Failed to get command rules: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error(), "error": err.Error()})
 		return
 	}
 
@@ -33,13 +33,13 @@ func GetCommandRule(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid id"})
+		c.JSON(http.StatusBadRequest, gin.H{"msg": "Invalid id", "error": "Invalid id"})
 		return
 	}
 
 	rule, err := models.GetTerminalCommandRuleById(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Rule not found"})
+		c.JSON(http.StatusNotFound, gin.H{"msg": "Rule not found", "error": "Rule not found"})
 		return
 	}
 
@@ -54,7 +54,7 @@ func CreateCommandRule(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		klog.Errorf("Failed to read request body: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"msg": "Failed to read request body", "error": "Failed to read request body"})
 		return
 	}
 	
@@ -67,8 +67,10 @@ func CreateCommandRule(c *gin.Context) {
 	var jsonData map[string]interface{}
 	if err := c.ShouldBindJSON(&jsonData); err != nil {
 		klog.Errorf("Failed to bind JSON: %v, body: %s", err, string(bodyBytes))
+		errorMsg := "Invalid JSON format: " + err.Error()
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid JSON format: " + err.Error(),
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"details": "Request body: " + string(bodyBytes),
 		})
 		return
@@ -85,8 +87,10 @@ func CreateCommandRule(c *gin.Context) {
 		klog.Infof("Parsed role: %s", role)
 	} else {
 		klog.Errorf("Role field missing or invalid. jsonData: %+v", jsonData)
+		errorMsg := "Role is required and must be a string"
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Role is required and must be a string",
+			"msg":      errorMsg,
+			"error":    errorMsg,
 			"received": jsonData,
 		})
 		return
@@ -112,8 +116,10 @@ func CreateCommandRule(c *gin.Context) {
 			parsed, err := strconv.Atoi(v)
 			if err != nil {
 				klog.Errorf("Failed to parse ruleType string '%s': %v", v, err)
+				errorMsg := "ruleType must be a number (0 for blacklist, 1 for whitelist), got string: " + v
 				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "ruleType must be a number (0 for blacklist, 1 for whitelist), got string: " + v,
+					"msg":   errorMsg,
+					"error": errorMsg,
 				})
 				return
 			}
@@ -121,8 +127,10 @@ func CreateCommandRule(c *gin.Context) {
 			klog.Infof("Converted ruleType from string '%s': %d", v, ruleTypeInt)
 		default:
 			klog.Errorf("Invalid ruleType type: %T, value: %v", v, v)
+			errorMsg := "ruleType must be a number (0 for blacklist, 1 for whitelist)"
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "ruleType must be a number (0 for blacklist, 1 for whitelist)",
+				"msg":           errorMsg,
+				"error":         errorMsg,
 				"received_type": fmt.Sprintf("%T", ruleTypeVal),
 				"received_value": ruleTypeVal,
 			})
@@ -132,8 +140,10 @@ func CreateCommandRule(c *gin.Context) {
 		// 验证 ruleType 值范围
 		if ruleTypeInt < 0 || ruleTypeInt > 1 {
 			klog.Errorf("ruleType out of range: %d (must be 0 or 1)", ruleTypeInt)
+			errorMsg := "ruleType must be 0 (blacklist) or 1 (whitelist), got: " + strconv.Itoa(ruleTypeInt)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "ruleType must be 0 (blacklist) or 1 (whitelist), got: " + strconv.Itoa(ruleTypeInt),
+				"msg":   errorMsg,
+				"error": errorMsg,
 			})
 			return
 		}
@@ -151,8 +161,10 @@ func CreateCommandRule(c *gin.Context) {
 		klog.Infof("Parsed command: %s", command)
 	} else {
 		klog.Errorf("Command field missing or invalid. jsonData: %+v", jsonData)
+		errorMsg := "Command is required and must be a string"
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Command is required and must be a string",
+			"msg":      errorMsg,
+			"error":    errorMsg,
 			"received": jsonData,
 		})
 		return
@@ -182,7 +194,7 @@ func CreateCommandRule(c *gin.Context) {
 	id, err := models.AddTerminalCommandRule(&rule)
 	if err != nil {
 		klog.Errorf("Failed to create command rule: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error(), "error": err.Error()})
 		return
 	}
 
@@ -197,20 +209,21 @@ func UpdateCommandRule(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid id"})
+		c.JSON(http.StatusBadRequest, gin.H{"msg": "Invalid id", "error": "Invalid id"})
 		return
 	}
 
 	var rule models.TerminalCommandRule
 	if err := c.ShouldBindJSON(&rule); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		errorMsg := err.Error()
+		c.JSON(http.StatusBadRequest, gin.H{"msg": errorMsg, "error": errorMsg})
 		return
 	}
 
 	rule.Id = id
 	if err := models.UpdateTerminalCommandRule(&rule); err != nil {
 		klog.Errorf("Failed to update command rule: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error(), "error": err.Error()})
 		return
 	}
 
@@ -224,13 +237,13 @@ func DeleteCommandRule(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid id"})
+		c.JSON(http.StatusBadRequest, gin.H{"msg": "Invalid id", "error": "Invalid id"})
 		return
 	}
 
 	if err := models.DeleteTerminalCommandRule(id); err != nil {
 		klog.Errorf("Failed to delete command rule: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error(), "error": err.Error()})
 		return
 	}
 
@@ -243,14 +256,14 @@ func DeleteCommandRule(c *gin.Context) {
 func GetCommandRulesByRole(c *gin.Context) {
 	role := c.Param("role")
 	if role == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Role is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"msg": "Role is required", "error": "Role is required"})
 		return
 	}
 
 	rules, err := models.GetTerminalCommandRulesByRole(role)
 	if err != nil {
 		klog.Errorf("Failed to get command rules by role: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"msg": err.Error(), "error": err.Error()})
 		return
 	}
 

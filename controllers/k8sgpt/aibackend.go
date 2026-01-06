@@ -14,11 +14,14 @@ func ListAIBackends(c *gin.Context) {
 	backends, err := models.GetAllAIBackends()
 	if err != nil {
 		klog.Errorf("获取AI后端列表失败: %v", err)
+		errorMsg := "获取AI后端列表失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "获取AI后端列表失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -36,11 +39,14 @@ func GetAIBackend(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
+		errorMsg := "无效的ID参数"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "无效的ID参数",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -49,11 +55,14 @@ func GetAIBackend(c *gin.Context) {
 	backend, err := models.GetAIBackendByID(id)
 	if err != nil {
 		klog.Errorf("获取AI后端失败: %v", err)
+		errorMsg := "AI后端不存在"
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    404,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "AI后端不存在",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -71,11 +80,14 @@ func CreateAIBackend(c *gin.Context) {
 	var backend models.AIBackend
 	if err := c.ShouldBindJSON(&backend); err != nil {
 		klog.Errorf("解析请求体失败: %v", err)
+		errorMsg := "请求参数错误: " + err.Error()
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "请求参数错误: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -83,22 +95,28 @@ func CreateAIBackend(c *gin.Context) {
 
 	// 验证必填字段
 	if backend.Name == "" {
+		errorMsg := "后端名称不能为空"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "后端名称不能为空",
+				"message": errorMsg,
 			},
 		})
 		return
 	}
 
 	if backend.Provider == "" {
+		errorMsg := "提供商不能为空"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "提供商不能为空",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -107,11 +125,14 @@ func CreateAIBackend(c *gin.Context) {
 	// 检查名称是否已存在
 	existing, _ := models.GetAIBackendByName(backend.Name)
 	if existing != nil {
+		errorMsg := "后端名称已存在"
 		c.JSON(http.StatusConflict, gin.H{
 			"code":    409,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "后端名称已存在",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -120,11 +141,14 @@ func CreateAIBackend(c *gin.Context) {
 	id, err := models.AddAIBackend(&backend)
 	if err != nil {
 		klog.Errorf("创建AI后端失败: %v", err)
+		errorMsg := "创建AI后端失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "创建AI后端失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -143,11 +167,14 @@ func UpdateAIBackend(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
+		errorMsg := "无效的ID参数"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "无效的ID参数",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -156,11 +183,14 @@ func UpdateAIBackend(c *gin.Context) {
 	var backend models.AIBackend
 	if err := c.ShouldBindJSON(&backend); err != nil {
 		klog.Errorf("解析请求体失败: %v", err)
+		errorMsg := "请求参数错误: " + err.Error()
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "请求参数错误: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -171,11 +201,14 @@ func UpdateAIBackend(c *gin.Context) {
 	// 检查是否存在
 	existing, err := models.GetAIBackendByID(id)
 	if err != nil {
+		errorMsg := "AI后端不存在"
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    404,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "AI后端不存在",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -185,11 +218,14 @@ func UpdateAIBackend(c *gin.Context) {
 	if backend.Name != existing.Name {
 		existingByName, _ := models.GetAIBackendByName(backend.Name)
 		if existingByName != nil {
+			errorMsg := "后端名称已存在"
 			c.JSON(http.StatusConflict, gin.H{
 				"code":    409,
 				"message": "error",
+				"msg":     errorMsg,
+				"error":   errorMsg,
 				"data": gin.H{
-					"message": "后端名称已存在",
+					"message": errorMsg,
 				},
 			})
 			return
@@ -199,11 +235,14 @@ func UpdateAIBackend(c *gin.Context) {
 	err = models.UpdateAIBackend(&backend)
 	if err != nil {
 		klog.Errorf("更新AI后端失败: %v", err)
+		errorMsg := "更新AI后端失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "更新AI后端失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -221,11 +260,14 @@ func DeleteAIBackend(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
+		errorMsg := "无效的ID参数"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "无效的ID参数",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -234,11 +276,14 @@ func DeleteAIBackend(c *gin.Context) {
 	err = models.DeleteAIBackend(id)
 	if err != nil {
 		klog.Errorf("删除AI后端失败: %v", err)
+		errorMsg := "删除AI后端失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "删除AI后端失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
@@ -258,11 +303,14 @@ func SetDefaultAIBackend(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
+		errorMsg := "无效的ID参数"
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "无效的ID参数",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -271,11 +319,14 @@ func SetDefaultAIBackend(c *gin.Context) {
 	// 检查是否存在
 	_, err = models.GetAIBackendByID(id)
 	if err != nil {
+		errorMsg := "AI后端不存在"
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    404,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "AI后端不存在",
+				"message": errorMsg,
 			},
 		})
 		return
@@ -284,11 +335,14 @@ func SetDefaultAIBackend(c *gin.Context) {
 	err = models.SetDefaultAIBackend(id)
 	if err != nil {
 		klog.Errorf("设置默认AI后端失败: %v", err)
+		errorMsg := "设置默认AI后端失败: " + err.Error()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "error",
+			"msg":     errorMsg,
+			"error":   errorMsg,
 			"data": gin.H{
-				"message": "设置默认AI后端失败: " + err.Error(),
+				"message": errorMsg,
 			},
 		})
 		return
