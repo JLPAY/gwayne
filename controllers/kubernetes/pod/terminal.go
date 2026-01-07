@@ -44,6 +44,7 @@ type TerminalSession struct {
 	sockJSSession  sockjs.Session                  // WebSocket 会话
 	sizeChan       chan remotecommand.TerminalSize // 用于处理终端尺寸变化的通道
 	user           *models.User                    // 用户信息
+	cluster        string                          // 集群名称
 	commandBuffer  string                          // 命令缓冲区，用于累积完整命令
 	lastCommand    string                          // 上一个命令，用于防止重复执行被拦截的命令
 	commandBlocked bool                            // 标记上一个命令是否被拦截
@@ -248,7 +249,7 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 				}
 
 				// 检查命令是否被禁止（user 为 nil 时，按普通用户处理）
-				if err := checkCommandPermission(t.user, command); err != nil {
+				if err := checkCommandPermission(t.user, t.cluster, command); err != nil {
 					klog.Warningf("Command blocked: '%s' for user %s, reason: %v", command, userName, err)
 
 					// 命令字符可能已经发送到容器，需要清除容器输入缓冲区
@@ -722,7 +723,7 @@ func extractCommandName(cmd string) string {
 }
 
 // checkCommandPermission 检查命令权限
-func checkCommandPermission(user *models.User, command string) error {
+func checkCommandPermission(user *models.User, cluster string, command string) error {
 	// 确定用户角色：user 为 nil 时，按普通用户处理
 	role := "user"
 	userName := "unknown"
@@ -738,7 +739,7 @@ func checkCommandPermission(user *models.User, command string) error {
 		}
 	}
 
-	klog.Infof("checkCommandPermission: checking command '%s' for user '%s' (role: %s, isAdmin: %v)", command, userName, role, isAdmin)
+	klog.Infof("checkCommandPermission: checking command '%s' for user '%s' (role: %s, isAdmin: %v, cluster: %s)", command, userName, role, isAdmin, cluster)
 
 	// 检查命令是否匹配规则
 	command = strings.TrimSpace(command)
@@ -754,21 +755,22 @@ func checkCommandPermission(user *models.User, command string) error {
 		return nil
 	}
 
-	// 获取该角色的规则
-	rules, err := models.GetEnabledRulesByRole(role)
+	// 获取该角色和集群的规则
+	rules, err := models.GetEnabledRulesByRoleAndCluster(role, cluster)
 	if err != nil {
-		klog.Warningf("Failed to get command rules for role %s: %v", role, err)
+		klog.Warningf("Failed to get command rules for role %s and cluster %s: %v", role, cluster, err)
 		// 如果获取规则失败，对于 admin 用户允许执行（fail-open），对于普通用户也允许执行
 		return nil
 	}
 
 	// 如果没有规则，允许执行
 	// 特别地，对于 admin 用户，如果没有设置 admin 角色的规则，则完全不受限制
+	// 对于任何用户，如果没有为该集群配置规则，则不受限制
 	if len(rules) == 0 {
 		if isAdmin {
-			klog.V(3).Infof("checkCommandPermission: admin user '%s' has no rules configured, allowing all commands", userName)
+			klog.V(3).Infof("checkCommandPermission: admin user '%s' has no rules configured for cluster '%s', allowing all commands", userName, cluster)
 		} else {
-			klog.V(3).Infof("checkCommandPermission: no rules for role %s, allowing command", role)
+			klog.V(3).Infof("checkCommandPermission: no rules for role %s and cluster %s, allowing command", role, cluster)
 		}
 		return nil
 	}
@@ -1057,6 +1059,7 @@ func handleTerminalSession(session sockjs.Session) {
 			sockJSSession:  session,
 			sizeChan:       make(chan remotecommand.TerminalSize, 10), // 增加缓冲区大小
 			user:           user,
+			cluster:        tr.Cluster,
 			commandBuffer:  "",
 			lastCommand:    "",
 			commandBlocked: false,
