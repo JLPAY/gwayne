@@ -2,13 +2,14 @@ package middleware
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
+
 	"github.com/JLPAY/gwayne/models"
 	"github.com/JLPAY/gwayne/pkg/rsakey"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
-	"net/http"
-	"strings"
 )
 
 func JWTauth() gin.HandlerFunc {
@@ -40,9 +41,27 @@ func JWTauth() gin.HandlerFunc {
 			return
 		}
 
-		// 获取 JWT 声明
-		claims := token.Claims.(jwt.MapClaims)
-		username := claims["aud"].(string)
+		// 获取 JWT 声明（安全断言，避免 claims["aud"] 缺失或类型错误导致 panic）
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+			return
+		}
+		audVal, ok := claims["aud"]
+		if !ok || audVal == nil {
+			klog.Errorf("Auth token missing aud claim")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: missing aud"})
+			c.Abort()
+			return
+		}
+		username, ok := audVal.(string)
+		if !ok || username == "" {
+			klog.Errorf("Auth token aud claim invalid type or empty: %T", audVal)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: invalid aud"})
+			c.Abort()
+			return
+		}
 		user, err := models.GetUserDetail(username)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

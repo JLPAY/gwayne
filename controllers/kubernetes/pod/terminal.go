@@ -21,6 +21,7 @@ import (
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/hack"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"github.com/hinshun/vt10x"
 	corev1 "k8s.io/api/core/v1"
@@ -188,8 +189,12 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 					t.sentBuffer, len(t.sentBuffer), command)
 
 				userName := "unknown"
+				role := "user"
 				if t.user != nil {
 					userName = t.user.Name
+					if t.user.Admin {
+						role = "admin"
+					}
 				}
 
 				// 再次清理命令，确保去除 prompt（因为 cleanPrompt 可能在 getCurrentCommandLine 中已经调用过，但这里再次确保）
@@ -237,9 +242,10 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 				// 检查是否是重复执行被拦截的命令
 				if t.commandBlocked && command == t.lastCommand {
 					klog.Warningf("Command '%s' was already blocked, preventing re-execution", command)
+					denyMsg := fmt.Sprintf("\r\n\x1b[31m[命令被阻止]\x1b[0m 用户角色: %s, 拒绝执行的命令: %s. Command Permission Denied: command was already blocked\r\n", role, command)
 					errorMsg, _ := json.Marshal(TerminalMessage{
 						Op:   "stdout",
-						Data: "\r\n\x1b[31m[命令被阻止]\x1b[0m Command Permission Denied: command was already blocked\r\n",
+						Data: denyMsg,
 					})
 					t.sockJSSession.Send(string(errorMsg))
 					t.commandBuffer = ""
@@ -267,11 +273,12 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 						t.commandBuffer = ""
 						t.sentBuffer = ""
 
-						// 同步发送错误消息给前端，确保用户能看到提示
+						// 同步发送错误消息给前端，确保用户能看到提示（含用户角色和拒绝的命令）
 						// 使用 stdout 而不是 stderr，这样更明显
+						denyMsg := fmt.Sprintf("\r\n\x1b[31m[命令被阻止]\x1b[0m 用户角色: %s, 拒绝执行的命令: %s. Command Permission Denied: %s\r\n", role, command, err.Error())
 						errorMsg, _ := json.Marshal(TerminalMessage{
 							Op:   "stdout",
-							Data: "\r\n\x1b[31m[命令被阻止]\x1b[0m Command Permission Denied: " + err.Error() + "\r\n",
+							Data: denyMsg,
 						})
 						if sendErr := t.sockJSSession.Send(string(errorMsg)); sendErr != nil {
 							klog.Errorf("Failed to send error message: %v", sendErr)
@@ -287,10 +294,11 @@ func (t *TerminalSession) Read(p []byte) (int, error) {
 					t.commandBuffer = ""
 					t.sentBuffer = ""
 
-					// 同步发送错误消息给前端
+					// 同步发送错误消息给前端（含用户角色和拒绝的命令）
+					denyMsg := fmt.Sprintf("\r\n\x1b[31m[命令被阻止]\x1b[0m 用户角色: %s, 拒绝执行的命令: %s. Command Permission Denied: %s\r\n", role, command, err.Error())
 					errorMsg, _ := json.Marshal(TerminalMessage{
 						Op:   "stdout",
-						Data: "\r\n\x1b[31m[命令被阻止]\x1b[0m Command Permission Denied: " + err.Error() + "\r\n",
+						Data: denyMsg,
 					})
 					if sendErr := t.sockJSSession.Send(string(errorMsg)); sendErr != nil {
 						klog.Errorf("Failed to send error message: %v", sendErr)
@@ -1021,28 +1029,36 @@ func handleTerminalSession(session sockjs.Session) {
 		return
 	}
 
-	// 验证客户端传来的 token 是否有效
-	err = checkShellToken(tr.Token, tr.Namespace, tr.Pod)
+	// 验证 token 并尝试从 token 中解析用户名（JWT 含 aud，多实例时用于回退获取用户）
+	tokenUsername, err := getUsernameFromShellToken(tr.Token, tr.Namespace, tr.Pod)
 	if err != nil {
-		klog.Error(http.StatusBadRequest, fmt.Sprintf("token (%s) not valid %v.", tr.Token, err))
+		klog.Errorf("handleTerminalSession: token not valid: %v", err)
 		return
 	}
 
-	// 从 session 存储中获取用户信息
+	// 从 session 存储中获取用户信息（多实例时可能未命中，则用 token 中的用户名回退查库）
 	var user *models.User
 	sessionUserMux.RLock()
 	if u, exists := sessionUserMap[tr.SessionId]; exists {
 		user = u
 		klog.Infof("handleTerminalSession: found user for sessionId %s: %s (admin: %v)", tr.SessionId, u.Name, u.Admin)
 	} else {
-		// 获取所有可用的 sessionId 用于调试
-		keys := make([]string, 0, len(sessionUserMap))
-		for k := range sessionUserMap {
-			keys = append(keys, k)
+		// 未命中内存映射（常见于多实例：POST 在 A，WebSocket 在 B），用 token 中的用户名回退获取用户
+		if tokenUsername != "" {
+			if u, err := models.GetUserDetail(tokenUsername); err == nil {
+				user = u
+				klog.Infof("handleTerminalSession: user loaded from token for sessionId %s: %s (admin: %v)", tr.SessionId, u.Name, u.Admin)
+			} else {
+				klog.Warningf("handleTerminalSession: GetUserDetail(%s) failed: %v", tokenUsername, err)
+			}
 		}
-		sessionUserMux.RUnlock()
-		klog.Warningf("handleTerminalSession: user not found for sessionId %s, available sessions: %v", tr.SessionId, keys)
-		sessionUserMux.RLock()
+		if user == nil {
+			keys := make([]string, 0, len(sessionUserMap))
+			for k := range sessionUserMap {
+				keys = append(keys, k)
+			}
+			klog.Warningf("handleTerminalSession: user not found for sessionId %s (tokenUsername=%q), available sessions: %v", tr.SessionId, tokenUsername, keys)
+		}
 	}
 	sessionUserMux.RUnlock()
 
@@ -1102,37 +1118,42 @@ func Terminal(c *gin.Context) {
 		return
 	}
 
-	// 获取用户信息
+	// 获取用户信息（必须能拿到用户，否则不创建会话，避免 WebSocket 侧拿不到角色）
+	var user *models.User
 	userInterface, exists := c.Get("User")
-	if exists {
-		if user, ok := userInterface.(*models.User); ok {
-			// 存储 sessionId -> user 的映射
-			sessionUserMux.Lock()
-			sessionUserMap[sessionId] = user
-			sessionUserMux.Unlock()
-
-			klog.Infof("Terminal: stored user for sessionId %s: %s (admin: %v)", sessionId, user.Name, user.Admin)
-
-			// 设置过期清理
-			go func(sid string) {
-				time.Sleep(sessionUserTTL)
-				sessionUserMux.Lock()
-				delete(sessionUserMap, sid)
-				sessionUserMux.Unlock()
-				klog.V(2).Infof("Terminal: cleaned up session %s after TTL", sid)
-			}(sessionId)
-		} else {
-			klog.Warningf("Terminal: user interface type assertion failed, type: %T", userInterface)
-		}
-	} else {
-		klog.Warningf("Terminal: user not found in context")
+	if !exists {
+		klog.Warningf("Terminal: user not found in context (JWT may be missing or invalid)")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User required for terminal"})
+		return
 	}
+	if u, ok := userInterface.(*models.User); !ok || u == nil {
+		klog.Warningf("Terminal: user interface type assertion failed, type: %T", userInterface)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user context"})
+		return
+	}
+	user = userInterface.(*models.User)
+
+	// 存储 sessionId -> user 的映射（多实例时 WebSocket 可能连到其他实例，会通过 token 回退获取用户）
+	sessionUserMux.Lock()
+	sessionUserMap[sessionId] = user
+	sessionUserMux.Unlock()
+
+	klog.Infof("Terminal: stored user for sessionId %s: %s (admin: %v)", sessionId, user.Name, user.Admin)
+
+	// 设置过期清理
+	go func(sid string) {
+		time.Sleep(sessionUserTTL)
+		sessionUserMux.Lock()
+		delete(sessionUserMap, sid)
+		sessionUserMux.Unlock()
+		klog.V(2).Infof("Terminal: cleaned up session %s after TTL", sid)
+	}(sessionId)
 
 	klog.Infof("Terminal: creating session, sessionId: %s", sessionId)
 
 	result := TerminalResult{
 		SessionId: sessionId,
-		Token:     generateToken(namespace, pod),
+		Token:     generateToken(namespace, pod, user.Name),
 		Cluster:   cluster,
 		Namespace: namespace,
 		Pod:       pod,
@@ -1145,12 +1166,30 @@ func Terminal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
-// token生成规则
-// 1. 拼接namespace、podName、unixtime(加600秒，十分钟期限)，平台appkey，并进行md5加密操作
-// 2. 取生成的32位加密字符串第12-20位，于unixtime进行拼接生成token
-func generateToken(namespace, pod string) string {
+// token 生成：优先使用 JWT（含 username），便于多实例时 WebSocket 从 token 回退获取用户
+const terminalTokenExpSec = 60 * 10
+
+func generateToken(namespace, pod, username string) string {
 	appKey := config.Conf.App.AppKey
-	endTime := time.Now().Unix() + 60*10
+	claims := jwt.MapClaims{
+		"aud":       username,
+		"namespace": namespace,
+		"pod":       pod,
+		"exp":       time.Now().Unix() + terminalTokenExpSec,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(appKey))
+	if err != nil {
+		// 降级为旧格式（不含 username，多实例时无法回退获取用户）
+		return generateTokenLegacy(namespace, pod)
+	}
+	return signed
+}
+
+// 旧版 token 格式（无 username），仅用于兼容已下发的 token
+func generateTokenLegacy(namespace, pod string) string {
+	appKey := config.Conf.App.AppKey
+	endTime := time.Now().Unix() + terminalTokenExpSec
 	rawTokenKey := namespace + pod + strconv.FormatInt(endTime, 10) + appKey
 	md5Hash := md5.New()
 	md5Hash.Write([]byte(rawTokenKey))
@@ -1159,7 +1198,43 @@ func generateToken(namespace, pod string) string {
 	return cipherStr[12:20] + strconv.FormatInt(endTime, 10)
 }
 
-func checkShellToken(token string, namespace string, podName string) error {
+// getUsernameFromShellToken 校验 token 并返回用户名（若为 JWT 则返回 aud，旧格式返回空字符串）
+// 多实例时 WebSocket 可能连到未写入 sessionUserMap 的实例，可用此结果回退 GetUserDetail(username)
+func getUsernameFromShellToken(tokenStr, namespace, podName string) (username string, err error) {
+	appKey := config.Conf.App.AppKey
+
+	// 先尝试 JWT 格式
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(appKey), nil
+	})
+	if err == nil && token != nil && token.Valid {
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			return "", errors.New("invalid token claims")
+		}
+		if ns, _ := claims["namespace"].(string); ns != namespace {
+			return "", errors.New("token namespace mismatch")
+		}
+		if pod, _ := claims["pod"].(string); pod != podName {
+			return "", errors.New("token pod mismatch")
+		}
+		if aud, ok := claims["aud"].(string); ok && aud != "" {
+			return aud, nil
+		}
+		return "", nil
+	}
+
+	// 再尝试旧格式
+	if errLegacy := checkShellTokenLegacy(tokenStr, namespace, podName); errLegacy != nil {
+		return "", errLegacy
+	}
+	return "", nil
+}
+
+func checkShellTokenLegacy(token string, namespace string, podName string) error {
 	endTimeRaw := []rune(token)
 	var endTime int64
 	var endTimeStr string
