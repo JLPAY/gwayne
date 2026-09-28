@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log"
+	"regexp"
 )
 
 func InitDb() {
@@ -21,6 +22,11 @@ func InitDb() {
 }
 
 func ensureDatabase() error {
+	// 验证数据库名称，防止 SQL 注入
+	dbName := config.Conf.DataBase.DBName
+	if !isValidDatabaseName(dbName) {
+		return fmt.Errorf("invalid database name: %s (only alphanumeric and underscore allowed)", dbName)
+	}
 
 	// 构建数据库连接字符串（不指定数据库名，确保是连接到 MySQL 服务）
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/",
@@ -43,7 +49,7 @@ func ensureDatabase() error {
 
 	// 检查数据库是否存在
 	var result int64
-	err = db.Raw("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = ?", config.Conf.DataBase.DBName).Scan(&result).Error
+	err = db.Raw("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = ?", dbName).Scan(&result).Error
 	if err != nil {
 		return fmt.Errorf("failed to check if database exists: %w", err)
 	}
@@ -52,8 +58,8 @@ func ensureDatabase() error {
 		// 数据库不存在，创建数据库
 		log.Println("Database does not exist, creating database...")
 
-		// 使用原生 SQL 创建数据库
-		err = db.Exec(fmt.Sprintf("CREATE DATABASE %s CHARACTER SET utf8 COLLATE utf8_general_ci;", config.Conf.DataBase.DBName)).Error
+		// 使用原生 SQL 创建数据库（数据库名已通过白名单验证）
+		err = db.Exec(fmt.Sprintf("CREATE DATABASE %s CHARACTER SET utf8 COLLATE utf8_general_ci;", dbName)).Error
 		if err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
 		}
@@ -61,4 +67,13 @@ func ensureDatabase() error {
 	}
 
 	return nil
+}
+
+// isValidDatabaseName 验证数据库名称只包含字母、数字和下划线
+func isValidDatabaseName(name string) bool {
+	if name == "" {
+		return false
+	}
+	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	return validName.MatchString(name)
 }
