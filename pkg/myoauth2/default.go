@@ -38,8 +38,19 @@ func (o *OAuth2Default) UserInfo(token *oauth2.Token) (*BasicUserInfo, error) {
 	// 打印原始用户信息响应
 	klog.Infof("OAuth2 userinfo API response: %s", string(result))
 
+	// 尝试解包信封格式 {"code":200,"data":{...}}
+	var envelope struct {
+		Code int             `json:"code"`
+		Data json.RawMessage `json:"data"`
+	}
+	rawJSON := result
+	if err := json.Unmarshal(result, &envelope); err == nil && envelope.Code == 200 && envelope.Data != nil {
+		klog.Infof("OAuth2 userinfo: detected envelope format, extracting data field")
+		rawJSON = envelope.Data
+	}
+
 	if len(o.ApiMapping) == 0 {
-		err = json.Unmarshal(result, userinfo)
+		err = json.Unmarshal(rawJSON, userinfo)
 		if err != nil {
 			return nil, fmt.Errorf("Error Unmarshal user info: %s", err)
 		}
@@ -47,7 +58,7 @@ func (o *OAuth2Default) UserInfo(token *oauth2.Token) (*BasicUserInfo, error) {
 	} else {
 		// 如果有 API 映射，则使用映射从响应中提取用户信息
 		usermap := make(map[string]interface{})
-		if err := json.Unmarshal(result, &usermap); err != nil {
+		if err := json.Unmarshal(rawJSON, &usermap); err != nil {
 			return nil, fmt.Errorf("Error Unmarshal user info: %s", err)
 		}
 		klog.Infof("OAuth2 userinfo raw data: %+v", usermap)

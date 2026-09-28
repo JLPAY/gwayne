@@ -6,7 +6,6 @@ import (
 
 	"github.com/JLPAY/gwayne/controllers/auth"
 	"github.com/JLPAY/gwayne/models"
-	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/myoauth2"
 	"k8s.io/klog/v2"
 )
@@ -28,17 +27,13 @@ func init() {
 }
 
 func (p *OAuth2AuthProvider) Authenticate(authModel models.AuthModel) (*models.User, error) {
-	if !config.Conf.Auth.Oauth2.Enabled {
-		return nil, fmt.Errorf("OAuth2 authentication is disabled")
-	}
-
 	code := authModel.OAuth2Code
 	//klog.Info("OAuth2Code: ", code)
 
 	// 获取 OAuth2 配置信息
 	oauth2Config, ok := myoauth2.OAutherMap[authModel.OAuth2Name]
 	if !ok {
-		return nil, fmt.Errorf("OAuth2 service %s not found", authModel.OAuth2Name)
+		return nil, fmt.Errorf("OAuth2 service %s is not available", authModel.OAuth2Name)
 	}
 
 	// 通过 OAuth2 Code 获取 Token

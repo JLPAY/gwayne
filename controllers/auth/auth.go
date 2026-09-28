@@ -91,9 +91,20 @@ func Login(c *gin.Context) {
 	if authType == models.AuthTypeOAuth2 {
 		// 如果 oauth2Name 为空，尝试使用默认值
 		if oauth2Name == "" {
-			oauth2Name = config.Conf.Auth.Oauth2.Name
-			if oauth2Name == "" {
-				oauth2Name = "oauth2"
+			if len(myoauth2.OAutherMap) == 1 {
+				// 只有一个 provider，自动使用
+				for name := range myoauth2.OAutherMap {
+					oauth2Name = name
+				}
+			} else if len(myoauth2.OAutherMap) > 1 {
+				// 多个 provider 时必须指定
+				klog.Errorf("Multiple OAuth2 services configured, please specify service name in URL")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "已配置多个 OAuth2 服务，请指定服务名称"})
+				return
+			} else {
+				klog.Errorf("No OAuth2 services configured")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 OAuth2 服务"})
+				return
 			}
 		}
 

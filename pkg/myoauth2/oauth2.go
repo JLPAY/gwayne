@@ -58,26 +58,34 @@ type OAuther interface {
 	Client(ctx context.Context, t *oauth2.Token) *http.Client
 }
 
-// 初始化 Auth2Service
+// 初始化所有 OAuth2 服务
 func NewOAuth2Service() {
-	// 如果 OAuth2 服务未启用，跳过
-	if !config.Conf.Auth.Oauth2.Enabled {
-		klog.Infof("OAuth2 service is not enabled, skipping.")
+	if len(config.Conf.Auth.Oauth2) == 0 {
+		klog.Infof("No OAuth2 services configured.")
 		return
 	}
 
-	// 获取 OAuth2 服务名称，如果未配置则使用默认值
-	name := config.Conf.Auth.Oauth2.Name
-	if name == "" {
-		name = OAuth2TypeDefault
-		klog.Infof("OAuth2 Name not configured, using default name: %s", name)
+	for name, conf := range config.Conf.Auth.Oauth2 {
+		if !conf.Enabled {
+			klog.Infof("OAuth2 service '%s' is not enabled, skipping.", name)
+			continue
+		}
+		initOAuth2Provider(name, conf)
+	}
+}
+
+// 初始化单个 OAuth2 provider
+func initOAuth2Provider(name string, conf config.Oauth2Conf) {
+	// 如果 name 为空，使用 section key 作为 name
+	if conf.Name == "" {
+		conf.Name = name
+		klog.Infof("OAuth2 Name not configured for '%s', using section key as name", name)
 	}
 
-	// 加载 OAuth2 配置信息
-	// 解析 Scopes，如果为空或只有空白字符，则使用空数组
+	// 解析 Scopes
 	scopes := []string{}
-	if config.Conf.Auth.Oauth2.Scopes != "" {
-		scopesStr := strings.TrimSpace(config.Conf.Auth.Oauth2.Scopes)
+	if conf.Scopes != "" {
+		scopesStr := strings.TrimSpace(conf.Scopes)
 		if scopesStr != "" {
 			scopesList := strings.Split(scopesStr, ",")
 			for _, scope := range scopesList {
@@ -90,19 +98,19 @@ func NewOAuth2Service() {
 	}
 
 	info := &OAuth2Info{
-		ClientId:     config.Conf.Auth.Oauth2.ClientId,
-		ClientSecret: config.Conf.Auth.Oauth2.ClientSecret,
+		ClientId:     conf.ClientId,
+		ClientSecret: conf.ClientSecret,
 		Scopes:       scopes,
-		AuthUrl:      config.Conf.Auth.Oauth2.AuthURL,
-		TokenUrl:     config.Conf.Auth.Oauth2.TokenURL,
-		ApiUrl:       config.Conf.Auth.Oauth2.ApiURL,
-		Enabled:      config.Conf.Auth.Oauth2.Enabled,
+		AuthUrl:      conf.AuthURL,
+		TokenUrl:     conf.TokenURL,
+		ApiUrl:       conf.ApiURL,
+		Enabled:      conf.Enabled,
 	}
 
 	// 解析 API 字段映射
 	info.ApiMapping = make(map[string]string)
-	if config.Conf.Auth.Oauth2.ApiMapping != "" {
-		for _, mapping := range strings.Split(config.Conf.Auth.Oauth2.ApiMapping, ",") {
+	if conf.ApiMapping != "" {
+		for _, mapping := range strings.Split(conf.ApiMapping, ",") {
 			parts := strings.Split(mapping, ":")
 			if len(parts) == 2 {
 				info.ApiMapping[parts[0]] = parts[1]
@@ -110,10 +118,10 @@ func NewOAuth2Service() {
 		}
 	}
 
-	// 将 OAuth2Info 存储到全局映射，使用配置的 name 作为 key
+	// 将 OAuth2Info 存储到全局映射
 	OAuth2Infos[name] = info
 
-	// 创建 OAuth2 配置，使用配置的 name 组合 redirect_url
+	// 创建 OAuth2 配置
 	oauth2Config := oauth2.Config{
 		ClientID:     info.ClientId,
 		ClientSecret: info.ClientSecret,
@@ -121,11 +129,11 @@ func NewOAuth2Service() {
 			AuthURL:  info.AuthUrl,
 			TokenURL: info.TokenUrl,
 		},
-		RedirectURL: fmt.Sprintf("%s/login/oauth2/%s", config.Conf.Auth.Oauth2.RedirectURL, name),
+		RedirectURL: fmt.Sprintf("%s/login/oauth2/%s", conf.RedirectURL, name),
 		Scopes:      info.Scopes,
 	}
 
-	// 创建 OAuth2 默认实现，使用配置的 name 作为 key
+	// 创建 OAuth2 默认实现
 	OAutherMap[name] = &OAuth2Default{
 		Config:     &oauth2Config,
 		ApiUrl:     info.ApiUrl,

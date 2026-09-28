@@ -48,8 +48,8 @@ type LogConf struct {
 }
 
 type Auth struct {
-	Oauth2 Oauth2Conf `ini:"Oauth2"`
-	Ldap   LdapConf   `ini:"Ldap"`
+	Oauth2 map[string]Oauth2Conf `ini:"Oauth2"`
+	Ldap   LdapConf              `ini:"Ldap"`
 }
 
 type Oauth2Conf struct {

@@ -23,24 +23,37 @@ func ListBase(c *gin.Context) {
 	configMap["appLabelKey"] = "wayne-app"
 	configMap["enableRobin"] = false
 	configMap["ldapLogin"] = config.Conf.Auth.Ldap.Enabled
-	configMap["oauth2Login"] = config.Conf.Auth.Oauth2.Enabled
+
+	// 收集所有已启用的 OAuth2 provider
+	providers := []map[string]string{}
+	for name, conf := range config.Conf.Auth.Oauth2 {
+		if !conf.Enabled {
+			continue
+		}
+		displayName := conf.Name
+		if displayName == "" {
+			displayName = name
+		}
+		title := strings.ToUpper(displayName[:1]) + displayName[1:] + " Login"
+		providers = append(providers, map[string]string{
+			"name":        displayName,
+			"redirectURL": conf.RedirectURL,
+			"title":       title,
+		})
+	}
+	configMap["oauth2Login"] = len(providers) > 0
+	configMap["oauth2Providers"] = providers
 	configMap["enableApiKeys"] = true
 
 	// 登录框标题
 	configMap["system.title"] = "gwayne"
-	// 使用 OAuth2 Name 配置生成标题
-	if config.Conf.Auth.Oauth2.Enabled {
-		oauth2Name := config.Conf.Auth.Oauth2.Name
-		if oauth2Name == "" {
-			oauth2Name = "oauth2"
-		}
-		// 返回 OAuth2 服务名称
-		configMap["oauth2Name"] = oauth2Name
-		// 返回 OAuth2 RedirectURL，用于前端跳转到后端
-		configMap["oauth2RedirectURL"] = config.Conf.Auth.Oauth2.RedirectURL
-		// 将名称首字母大写，然后加上 " Login"
-		oauth2Title := strings.ToUpper(oauth2Name[:1]) + oauth2Name[1:] + " Login"
-		configMap["system.oauth2-title"] = oauth2Title
+	if len(providers) == 1 {
+		// 单 provider 向后兼容
+		configMap["oauth2Name"] = providers[0]["name"]
+		configMap["oauth2RedirectURL"] = providers[0]["redirectURL"]
+		configMap["system.oauth2-title"] = providers[0]["title"]
+	} else if len(providers) > 1 {
+		configMap["system.oauth2-title"] = "OAuth 2.0 Login"
 	} else {
 		configMap["system.oauth2-title"] = "OAuth 2.0 Login"
 	}
