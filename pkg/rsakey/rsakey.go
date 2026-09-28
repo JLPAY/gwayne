@@ -7,7 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/JLPAY/gwayne/pkg/config"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"k8s.io/klog/v2"
 	"os"
 	"path/filepath"

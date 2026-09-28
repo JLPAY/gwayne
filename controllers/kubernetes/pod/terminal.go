@@ -21,7 +21,7 @@ import (
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/hack"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
 	"github.com/hinshun/vt10x"
 	corev1 "k8s.io/api/core/v1"
@@ -1175,7 +1175,7 @@ func generateToken(namespace, pod, username string) string {
 		"aud":       username,
 		"namespace": namespace,
 		"pod":       pod,
-		"exp":       time.Now().Unix() + terminalTokenExpSec,
+		"exp":       jwt.NewNumericDate(time.Now().Add(time.Duration(terminalTokenExpSec) * time.Second)),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(appKey))

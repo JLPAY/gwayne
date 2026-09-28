@@ -7,7 +7,7 @@ import (
 
 	"github.com/JLPAY/gwayne/models"
 	"github.com/JLPAY/gwayne/pkg/rsakey"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 )

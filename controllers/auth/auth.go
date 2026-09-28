@@ -10,7 +10,7 @@ import (
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/myoauth2"
 	"github.com/JLPAY/gwayne/pkg/rsakey"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 )
@@ -229,9 +229,17 @@ func CurrentUser(c *gin.Context) {
 	}
 	//klog.Infof("token: %v", token)
 
-	// 获取 JWT 声明
-	claims := token.Claims.(jwt.MapClaims)
-	username := claims["aud"].(string)
+	// 获取 JWT 声明（安全断言，避免 claims["aud"] 缺失或类型错误导致 panic）
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+		return
+	}
+	username, ok := claims["aud"].(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+		return
+	}
 	user, err := models.GetUserDetail(username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -247,11 +255,9 @@ func generateJWT(user *models.User) (string, error) {
 	expSecond := config.Conf.App.TokenLifeTime
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		// 签发者
 		"iss": "gwayne",
-		// 签发时间
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(time.Duration(expSecond) * time.Second).Unix(),
+		"iat": jwt.NewNumericDate(time.Now()),
+		"exp": jwt.NewNumericDate(time.Now().Add(time.Duration(expSecond) * time.Second)),
 		"aud": user.Name,
 	})
 
