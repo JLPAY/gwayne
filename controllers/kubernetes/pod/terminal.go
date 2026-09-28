@@ -21,6 +21,7 @@ import (
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/hack"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
+	"github.com/JLPAY/gwayne/pkg/rsakey"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gin-gonic/gin"
 	"github.com/hinshun/vt10x"
@@ -1170,15 +1171,14 @@ func Terminal(c *gin.Context) {
 const terminalTokenExpSec = 60 * 10
 
 func generateToken(namespace, pod, username string) string {
-	appKey := config.Conf.App.AppKey
 	claims := jwt.MapClaims{
 		"aud":       username,
 		"namespace": namespace,
 		"pod":       pod,
 		"exp":       jwt.NewNumericDate(time.Now().Add(time.Duration(terminalTokenExpSec) * time.Second)),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString([]byte(appKey))
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(rsakey.RsaPrivateKey)
 	if err != nil {
 		// 降级为旧格式（不含 username，多实例时无法回退获取用户）
 		return generateTokenLegacy(namespace, pod)
@@ -1201,14 +1201,12 @@ func generateTokenLegacy(namespace, pod string) string {
 // getUsernameFromShellToken 校验 token 并返回用户名（若为 JWT 则返回 aud，旧格式返回空字符串）
 // 多实例时 WebSocket 可能连到未写入 sessionUserMap 的实例，可用此结果回退 GetUserDetail(username)
 func getUsernameFromShellToken(tokenStr, namespace, podName string) (username string, err error) {
-	appKey := config.Conf.App.AppKey
-
-	// 先尝试 JWT 格式
+	// 先尝试 JWT 格式（RSA 签名）
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(appKey), nil
+		return rsakey.RsaPublicKey, nil
 	})
 	if err == nil && token != nil && token.Valid {
 		claims, ok := token.Claims.(jwt.MapClaims)
