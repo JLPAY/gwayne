@@ -21,8 +21,15 @@ type CacheFactory struct {
 
 func (c ClusterManager) Close() {
 	// 清理 informer 和 stop 通道
-	close(c.CacheFactory.stopChan)
-	c.CacheFactory.sharedInformerFactory.Shutdown()
+	if c.CacheFactory == nil {
+		return
+	}
+	if c.CacheFactory.stopChan != nil {
+		close(c.CacheFactory.stopChan)
+	}
+	if c.CacheFactory.sharedInformerFactory != nil {
+		c.CacheFactory.sharedInformerFactory.Shutdown()
+	}
 }
 
 func buildCacheController(client *kubernetes.Clientset, clusterName string) (*CacheFactory, error) {
