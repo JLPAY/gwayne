@@ -59,7 +59,6 @@ type Oauth2Conf struct {
 	ClientId     string `ini:"ClientId"`
 	ClientSecret string `ini:"ClientSecret"`
 	RedirectURL  string `ini:"RedirectURL"`
-	LoginURL     string `ini:"LoginURL"`    // opsmanage 登录页 URL，用于发起 SSO 流程
 	AuthURL      string `ini:"AuthURL"`
 	TokenURL     string `ini:"TokenURL"`
 	ApiURL       string `ini:"ApiURL"`

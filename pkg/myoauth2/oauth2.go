@@ -18,8 +18,7 @@ func init() {
 
 // OAuth2 配置信息和授权处理器的全局映射
 var (
-	OAuth2Infos = make(map[string]*OAuth2Info) // 存储 OAuth2 服务配置信息
-	OAutherMap  = make(map[string]OAuther)     // 存储 OAuth2 认证接口实现
+	OAutherMap = make(map[string]OAuther) // 存储 OAuth2 认证接口实现
 )
 
 const (
@@ -41,7 +40,6 @@ type OAuth2Info struct {
 	AuthUrl      string            // OAuth2 授权 URL
 	TokenUrl     string            // OAuth2 Token URL
 	ApiUrl       string            // 获取用户信息的 API URL
-	LoginUrl     string            // opsmanage 登录页 URL，用于发起 SSO 流程
 	Enabled      bool              // 是否启用 OAuth2 服务
 	ApiMapping   map[string]string // API 字段映射
 }
@@ -105,7 +103,6 @@ func initOAuth2Provider(name string, conf config.Oauth2Conf) {
 		AuthUrl:      conf.AuthURL,
 		TokenUrl:     conf.TokenURL,
 		ApiUrl:       conf.ApiURL,
-		LoginUrl:     conf.LoginURL,
 		Enabled:      conf.Enabled,
 	}
 
@@ -119,9 +116,6 @@ func initOAuth2Provider(name string, conf config.Oauth2Conf) {
 			}
 		}
 	}
-
-	// 将 OAuth2Info 存储到全局映射
-	OAuth2Infos[name] = info
 
 	// 创建 OAuth2 配置
 	redirectURL := fmt.Sprintf("%s/login/oauth2/%s", conf.RedirectURL, name)
