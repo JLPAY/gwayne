@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -166,30 +165,6 @@ func Login(c *gin.Context) {
 				return
 			}
 
-			// 检查是否配置了 LoginURL（opsmanage 模式）
-			oauth2Info := myoauth2.OAuth2Infos[oauth2Name]
-			if oauth2Info != nil && oauth2Info.LoginUrl != "" {
-				// opsmanage 模式：构建 authorize URL 作为 redirect 参数
-				// 流程：跳 opsmanage 登录页 → 用户登录 → opsmanage 跳 authorize URL → 自动授权 → 回调
-				c.SetCookie("oauth2_next", next, 300, "/", "", false, true)
-				c.SetCookie("oauth2_provider", oauth2Name, 300, "/", "", false, true)
-
-				oauth2Conf := config.Conf.Auth.Oauth2[oauth2Name]
-				authorizeURL := fmt.Sprintf("%s?client_id=%s&response_type=code&redirect_uri=%s",
-					oauth2Info.AuthUrl,
-					url.QueryEscape(oauth2Conf.ClientId),
-					url.QueryEscape(oauth2Conf.RedirectURL),
-				)
-				loginURL := oauth2Info.LoginUrl + "?redirect=" + url.QueryEscape(authorizeURL)
-
-				klog.Infof("OAuth2 (opsmanage mode) - redirecting to login page")
-				klog.Infof("  - Provider: %s", oauth2Name)
-				klog.Infof("  - LoginURL: %s", oauth2Info.LoginUrl)
-				klog.Infof("  - Authorize URL (redirect target): %s", authorizeURL)
-				c.Redirect(http.StatusFound, loginURL)
-				return
-			}
-
 			// 标准 OAuth2 模式：生成随机 state，跳转到 authorize 端点
 			stateID := generateState(next, oauth2Name)
 			authURL := oauther.AuthCodeURL(stateID)
@@ -203,31 +178,14 @@ func Login(c *gin.Context) {
 			return
 		}
 
-		// 回调请求：恢复 next URL 和 provider name
-		// 优先从 state store 恢复（标准 OAuth2 模式），其次从 cookie 恢复（opsmanage 模式）
+		// 回调请求：从 state store 恢复 next URL 和 provider name
 		if state != "" {
 			if storedNext, storedProvider, ok := consumeState(state); ok {
 				next = storedNext
 				if storedProvider != "" {
 					oauth2Name = storedProvider
 				}
-				klog.Infof("OAuth2 callback - restored from state store: provider=%s, next=%s", oauth2Name, next)
-			}
-		}
-
-		// 如果 state store 没有，尝试从 cookie 恢复（opsmanage 模式）
-		if next == "" {
-			if cookieNext, err := c.Cookie("oauth2_next"); err == nil && cookieNext != "" {
-				next = cookieNext
-				// 清除 cookie
-				c.SetCookie("oauth2_next", "", -1, "/", "", false, true)
-			}
-			if cookieProvider, err := c.Cookie("oauth2_provider"); err == nil && cookieProvider != "" {
-				oauth2Name = cookieProvider
-				c.SetCookie("oauth2_provider", "", -1, "/", "", false, true)
-			}
-			if next != "" {
-				klog.Infof("OAuth2 callback - restored from cookie: provider=%s, next=%s", oauth2Name, next)
+				klog.Infof("OAuth2 callback - restored from state: provider=%s, next=%s", oauth2Name, next)
 			}
 		}
 
@@ -283,20 +241,20 @@ func Login(c *gin.Context) {
 
 	// 如果是 OAuth2 登录，重定向到前端
 	if authType == models.AuthTypeOAuth2 {
-		if next != "" {
-			// 将 token 作为 sid 参数附加到回调 URL
-			// 检查 next 是否已经包含查询参数
-			separator := "?"
-			if strings.Contains(next, "?") {
-				separator = "&"
-			}
-			redirectURL := fmt.Sprintf("%s%ssid=%s", next, separator, apiToken)
-			klog.Infof("OAuth2 login success, redirecting to: %s", redirectURL)
-			c.Redirect(http.StatusFound, redirectURL)
-			return
+		target := next
+		if target == "" {
+			// opsmanage 等外部平台发起的 OAuth2 登录不带 next，回退到前端首页
+			target = strings.TrimRight(config.Conf.App.AppUrl, "/") + "/sign-in"
+			klog.Infof("OAuth2 login without next param, falling back to: %s", target)
 		}
-		// 如果没有 next 参数，返回 JSON（向后兼容）
-		klog.Warning("OAuth2 login success but no next parameter, returning JSON")
+		separator := "?"
+		if strings.Contains(target, "?") {
+			separator = "&"
+		}
+		redirectURL := fmt.Sprintf("%s%ssid=%s", target, separator, apiToken)
+		klog.Infof("OAuth2 login success, redirecting to: %s", redirectURL)
+		c.Redirect(http.StatusFound, redirectURL)
+		return
 	}
 
 	// 其他登录方式返回 JSON
