@@ -24,10 +24,10 @@ func ListBase(c *gin.Context) {
 	configMap["enableRobin"] = false
 	configMap["ldapLogin"] = config.Conf.Auth.Ldap.Enabled
 
-	// 收集所有已启用的 OAuth2 provider
+	// 收集所有已启用且需要在 UI 显示的 OAuth2 provider
 	providers := []map[string]string{}
 	for name, conf := range config.Conf.Auth.Oauth2 {
-		if !conf.Enabled {
+		if !conf.Enabled || conf.HideOnUI {
 			continue
 		}
 		displayName := conf.Name

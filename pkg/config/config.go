@@ -54,10 +54,12 @@ type Auth struct {
 
 type Oauth2Conf struct {
 	Enabled      bool   `ini:"Enabled"`
-	Name         string `ini:"Name"` // OAuth2 服务名称，用于区分多个认证服务
+	HideOnUI     bool   `ini:"HideOnUI"`    // 为 true 时不在前端登录页显示此 provider 的登录按钮，默认 false（显示）
+	Name         string `ini:"Name"`        // OAuth2 服务名称，用于区分多个认证服务
 	ClientId     string `ini:"ClientId"`
 	ClientSecret string `ini:"ClientSecret"`
 	RedirectURL  string `ini:"RedirectURL"`
+	LoginURL     string `ini:"LoginURL"`    // opsmanage 登录页 URL，用于发起 SSO 流程
 	AuthURL      string `ini:"AuthURL"`
 	TokenURL     string `ini:"TokenURL"`
 	ApiURL       string `ini:"ApiURL"`

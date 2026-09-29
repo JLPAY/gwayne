@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/JLPAY/gwayne/models"
@@ -22,6 +26,47 @@ type Authenticator interface {
 
 // 注册器，用于注册认证器
 var registry = make(map[string]Authenticator)
+
+// stateStore 临时存储 OAuth2 state 参数与对应的 next URL 和 provider name
+type stateEntry struct {
+	next      string
+	provider  string
+	createdAt time.Time
+}
+
+var (
+	stateMu    sync.Mutex
+	stateStore = make(map[string]stateEntry)
+)
+
+func generateState(next string, provider string) string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	id := hex.EncodeToString(b)
+
+	stateMu.Lock()
+	stateStore[id] = stateEntry{next: next, provider: provider, createdAt: time.Now()}
+	// 清理超过 10 分钟的过期条目
+	for k, v := range stateStore {
+		if time.Since(v.createdAt) > 10*time.Minute {
+			delete(stateStore, k)
+		}
+	}
+	stateMu.Unlock()
+
+	return id
+}
+
+func consumeState(id string) (next string, provider string, ok bool) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	entry, exists := stateStore[id]
+	if exists {
+		delete(stateStore, id)
+		return entry.next, entry.provider, true
+	}
+	return "", "", false
+}
 
 // Register 用于注册认证器
 func Register(name string, authenticator Authenticator) {
@@ -108,26 +153,49 @@ func Login(c *gin.Context) {
 			}
 		}
 
-		oauther, ok := myoauth2.OAutherMap[oauth2Name]
-		if !ok {
-			klog.Errorf("OAuth2 service '%s' not found in OAutherMap. Available services: %v", oauth2Name, getOAuth2ServiceNames())
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的 OAuth2 服务 (%s)", oauth2Name)})
-			return
-		}
-
 		// 获取回调授权码
 		code := c.DefaultQuery("code", "")
 		klog.Infof("OAuth2 login - code: %s, oauth2Name: %s, state: %s", code, oauth2Name, state)
 
 		if code == "" {
-			// 如果没有获取到 code，重定向到 OAuth2 授权 URL
-			// 生成 OAuth2 授权 URL，使用 next 作为 state 参数
-			// 注意：不传递 oauth2.AccessTypeOnline，因为这不是标准 OAuth2 参数，某些提供商不支持
-			authURL := oauther.AuthCodeURL(next)
-			// 打印出详细的调试信息
+			// 初始请求：重定向到 OAuth2 授权
+			oauther, ok := myoauth2.OAutherMap[oauth2Name]
+			if !ok {
+				klog.Errorf("OAuth2 service '%s' not found in OAutherMap. Available services: %v", oauth2Name, getOAuth2ServiceNames())
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的 OAuth2 服务 (%s)", oauth2Name)})
+				return
+			}
+
+			// 检查是否配置了 LoginURL（opsmanage 模式）
+			oauth2Info := myoauth2.OAuth2Infos[oauth2Name]
+			if oauth2Info != nil && oauth2Info.LoginUrl != "" {
+				// opsmanage 模式：构建 authorize URL 作为 redirect 参数
+				// 流程：跳 opsmanage 登录页 → 用户登录 → opsmanage 跳 authorize URL → 自动授权 → 回调
+				c.SetCookie("oauth2_next", next, 300, "/", "", false, true)
+				c.SetCookie("oauth2_provider", oauth2Name, 300, "/", "", false, true)
+
+				oauth2Conf := config.Conf.Auth.Oauth2[oauth2Name]
+				authorizeURL := fmt.Sprintf("%s?client_id=%s&response_type=code&redirect_uri=%s",
+					oauth2Info.AuthUrl,
+					url.QueryEscape(oauth2Conf.ClientId),
+					url.QueryEscape(oauth2Conf.RedirectURL),
+				)
+				loginURL := oauth2Info.LoginUrl + "?redirect=" + url.QueryEscape(authorizeURL)
+
+				klog.Infof("OAuth2 (opsmanage mode) - redirecting to login page")
+				klog.Infof("  - Provider: %s", oauth2Name)
+				klog.Infof("  - LoginURL: %s", oauth2Info.LoginUrl)
+				klog.Infof("  - Authorize URL (redirect target): %s", authorizeURL)
+				c.Redirect(http.StatusFound, loginURL)
+				return
+			}
+
+			// 标准 OAuth2 模式：生成随机 state，跳转到 authorize 端点
+			stateID := generateState(next, oauth2Name)
+			authURL := oauther.AuthCodeURL(stateID)
 			klog.Infof("OAuth2 authorization request details:")
 			klog.Infof("  - OAuth2 service: %s", oauth2Name)
-			klog.Infof("  - State parameter: %s", next)
+			klog.Infof("  - State parameter: %s", stateID)
 			klog.Infof("  - Generated auth URL: %s", authURL)
 			klog.Infof("  - Redirecting to OAuth2 provider...")
 
@@ -135,10 +203,39 @@ func Login(c *gin.Context) {
 			return
 		}
 
-		// 如果有 code，说明是 OAuth2 回调，使用 state 参数作为回调 URL
+		// 回调请求：恢复 next URL 和 provider name
+		// 优先从 state store 恢复（标准 OAuth2 模式），其次从 cookie 恢复（opsmanage 模式）
 		if state != "" {
-			next = state
-			klog.Infof("OAuth2 callback received, using state as next URL: %s", next)
+			if storedNext, storedProvider, ok := consumeState(state); ok {
+				next = storedNext
+				if storedProvider != "" {
+					oauth2Name = storedProvider
+				}
+				klog.Infof("OAuth2 callback - restored from state store: provider=%s, next=%s", oauth2Name, next)
+			}
+		}
+
+		// 如果 state store 没有，尝试从 cookie 恢复（opsmanage 模式）
+		if next == "" {
+			if cookieNext, err := c.Cookie("oauth2_next"); err == nil && cookieNext != "" {
+				next = cookieNext
+				// 清除 cookie
+				c.SetCookie("oauth2_next", "", -1, "/", "", false, true)
+			}
+			if cookieProvider, err := c.Cookie("oauth2_provider"); err == nil && cookieProvider != "" {
+				oauth2Name = cookieProvider
+				c.SetCookie("oauth2_provider", "", -1, "/", "", false, true)
+			}
+			if next != "" {
+				klog.Infof("OAuth2 callback - restored from cookie: provider=%s, next=%s", oauth2Name, next)
+			}
+		}
+
+		// 查找 OAuth2 provider（使用恢复的 provider name）
+		if _, ok := myoauth2.OAutherMap[oauth2Name]; !ok {
+			klog.Errorf("OAuth2 service '%s' not found in OAutherMap. Available services: %v", oauth2Name, getOAuth2ServiceNames())
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的 OAuth2 服务 (%s)", oauth2Name)})
+			return
 		}
 
 		authModel.OAuth2Code = code

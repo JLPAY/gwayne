@@ -41,6 +41,7 @@ type OAuth2Info struct {
 	AuthUrl      string            // OAuth2 授权 URL
 	TokenUrl     string            // OAuth2 Token URL
 	ApiUrl       string            // 获取用户信息的 API URL
+	LoginUrl     string            // opsmanage 登录页 URL，用于发起 SSO 流程
 	Enabled      bool              // 是否启用 OAuth2 服务
 	ApiMapping   map[string]string // API 字段映射
 }
@@ -104,6 +105,7 @@ func initOAuth2Provider(name string, conf config.Oauth2Conf) {
 		AuthUrl:      conf.AuthURL,
 		TokenUrl:     conf.TokenURL,
 		ApiUrl:       conf.ApiURL,
+		LoginUrl:     conf.LoginURL,
 		Enabled:      conf.Enabled,
 	}
 
@@ -122,6 +124,7 @@ func initOAuth2Provider(name string, conf config.Oauth2Conf) {
 	OAuth2Infos[name] = info
 
 	// 创建 OAuth2 配置
+	redirectURL := fmt.Sprintf("%s/login/oauth2/%s", conf.RedirectURL, name)
 	oauth2Config := oauth2.Config{
 		ClientID:     info.ClientId,
 		ClientSecret: info.ClientSecret,
@@ -129,9 +132,11 @@ func initOAuth2Provider(name string, conf config.Oauth2Conf) {
 			AuthURL:  info.AuthUrl,
 			TokenURL: info.TokenUrl,
 		},
-		RedirectURL: fmt.Sprintf("%s/login/oauth2/%s", conf.RedirectURL, name),
+		RedirectURL: redirectURL,
 		Scopes:      info.Scopes,
 	}
+
+	klog.Infof("OAuth2 provider '%s' redirect_uri: %s", name, redirectURL)
 
 	// 创建 OAuth2 默认实现
 	OAutherMap[name] = &OAuth2Default{
