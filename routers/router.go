@@ -60,8 +60,11 @@ func InitRouter() *gin.Engine {
 
 		SetupKubernetesAppRoutes(apiV1)
 
-		// K8sGPT相关路由
-		SetupK8sGPTRoutes(apiV1)
+		// LLM 模型接入路由
+		SetupLLMModelRoutes(apiV1)
+
+		// Pod/资源 AI 排查诊断路由
+		SetupDiagnosisRoutes(apiV1)
 
 		// 终端命令规则路由
 		SetupTerminalRoutes(apiV1)

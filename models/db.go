@@ -96,7 +96,8 @@ func dbAutoMigrate() error {
 	err := DB.AutoMigrate(
 		&User{},
 		&Cluster{},
-		&AIBackend{},
+		&LLMModel{},
+		&PodDiagnosisReport{},
 		&TerminalCommandRule{},
 		/*&model.Role{},
 		&model.Group{},
