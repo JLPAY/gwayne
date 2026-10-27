@@ -36,6 +36,7 @@ const (
 	ResourceNameClusterRole             ResourceName = "clusterroles"
 	ResourceNameClusterRoleBinding      ResourceName = "clusterrolebindings"
 	ResourceNameServiceAccount          ResourceName = "serviceaccounts"
+	ResourceNameNetworkPolicy           ResourceName = "networkpolicies"
 )
 
 // 资源种类常量
@@ -64,6 +65,7 @@ const (
 	KindNameClusterRole             KindName = "ClusterRole"
 	KindNameClusterRoleBinding      KindName = "ClusterRoleBinding"
 	KindNameServiceAccount          KindName = "ServiceAccount"
+	KindNameNetworkPolicy           KindName = "NetworkPolicy"
 )
 
 // ResourceMap 包含资源的 GVRK 信息和命名空间标记
@@ -122,6 +124,7 @@ var predefinedResources = map[string]ResourceConfig{
 	"clusterroles":             {"clusterroles", "ClusterRole", true},
 	"clusterrolebindings":      {"clusterrolebindings", "ClusterRoleBinding", true},
 	"serviceaccounts":          {"serviceaccounts", "ServiceAccount", true},
+	"networkpolicies":          {"networkpolicies", "NetworkPolicy", true},
 }
 
 // 获取 Kubernetes 集群的资源映射
