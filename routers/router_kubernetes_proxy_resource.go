@@ -48,7 +48,8 @@ func SetupKubernetesProxyResourcesRoutes(rg *gin.RouterGroup) {
 
 		proxyResourceGroup.POST("/namespaces", proxy.NamespacesCreate)                  // 创建namespace
 		proxyResourceGroup.GET("/namespaces/:namespaceName", proxy.NamespacesGet)       // 获取指定namespace
-		proxyResourceGroup.POST("/namespaces/:namespaceName", proxy.NamespacesPut)      // update 指定namespace
+		proxyResourceGroup.PUT("/namespaces/:namespaceName", proxy.NamespacesPut)       // update 指定namespace
+		proxyResourceGroup.POST("/namespaces/:namespaceName", proxy.NamespacesPut)      // 兼容历史客户端（POST 更新）
 		proxyResourceGroup.DELETE("/namespaces/:namespaceName", proxy.NamespacesDelete) // Delete 指定namespace
 
 		// 带 namespace 的资源
