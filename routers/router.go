@@ -10,9 +10,18 @@ import (
 func InitRouter() *gin.Engine {
 	r := gin.New()
 
+	// 允许路径参数中出现被转义的 "/"（%2F）。集群名等业务标识可能包含 "/"，
+	// 默认按已解码的 URL.Path 匹配会被拆成多段导致路由 404。
+	// 开启 RawPath 匹配、关闭 gin 的内置解码，由 middleware.UnescapePathParams 统一解码。
+	r.UseRawPath = true
+	r.UnescapePathValues = false
+
 	// 记录日志和恢复
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
+
+	// 路径参数统一解码（需在业务 handler 之前）
+	r.Use(middleware.UnescapePathParams())
 
 	// 配置 CORS 中间件
 	r.Use(middleware.Cors())
