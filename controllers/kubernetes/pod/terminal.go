@@ -1172,12 +1172,15 @@ const terminalTokenExpSec = 60 * 10
 
 func generateToken(namespace, pod, username string) string {
 	claims := jwt.MapClaims{
+		"iss":       rsakey.JwtIssuer,
 		"aud":       username,
 		"namespace": namespace,
 		"pod":       pod,
 		"exp":       jwt.NewNumericDate(time.Now().Add(time.Duration(terminalTokenExpSec) * time.Second)),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	// 绑定当前生效公钥指纹，防止密钥轮换后旧令牌继续可用
+	token.Header["kid"] = rsakey.RsaKid
 	signed, err := token.SignedString(rsakey.RsaPrivateKey)
 	if err != nil {
 		// 降级为旧格式（不含 username，多实例时无法回退获取用户）
@@ -1206,12 +1209,20 @@ func getUsernameFromShellToken(tokenStr, namespace, podName string) (username st
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
+		// 密钥绑定：仅接受当前生效公钥对应的 kid
+		if kid, _ := token.Header["kid"].(string); kid != rsakey.RsaKid {
+			return nil, fmt.Errorf("unexpected key id")
+		}
 		return rsakey.RsaPublicKey, nil
 	})
 	if err == nil && token != nil && token.Valid {
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
 			return "", errors.New("invalid token claims")
+		}
+		// 签发者校验
+		if iss, _ := claims["iss"].(string); iss != rsakey.JwtIssuer {
+			return "", errors.New("invalid token issuer")
 		}
 		if ns, _ := claims["namespace"].(string); ns != namespace {
 			return "", errors.New("token namespace mismatch")

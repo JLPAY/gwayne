@@ -286,6 +286,10 @@ func CurrentUser(c *gin.Context) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
+		// 密钥绑定：仅接受当前生效公钥对应的 kid
+		if kid, _ := token.Header["kid"].(string); kid != rsakey.RsaKid {
+			return nil, fmt.Errorf("unexpected key id")
+		}
 		// 使用公钥验证签名
 		return rsakey.RsaPublicKey, nil
 	})
@@ -299,6 +303,11 @@ func CurrentUser(c *gin.Context) {
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+		return
+	}
+	// 签发者校验
+	if iss, _ := claims["iss"].(string); iss != rsakey.JwtIssuer {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: bad issuer"})
 		return
 	}
 	username, ok := claims["aud"].(string)
@@ -321,11 +330,13 @@ func generateJWT(user *models.User) (string, error) {
 	expSecond := config.Conf.App.TokenLifeTime
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": "gwayne",
+		"iss": rsakey.JwtIssuer,
 		"iat": jwt.NewNumericDate(time.Now()),
 		"exp": jwt.NewNumericDate(time.Now().Add(time.Duration(expSecond) * time.Second)),
 		"aud": user.Name,
 	})
+	// 绑定当前生效公钥指纹，防止密钥轮换后旧令牌继续可用
+	token.Header["kid"] = rsakey.RsaKid
 
 	return token.SignedString(rsakey.RsaPrivateKey)
 }
