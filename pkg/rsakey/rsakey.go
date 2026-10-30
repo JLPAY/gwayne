@@ -122,6 +122,13 @@ func initRsaKeyFromFiles() {
 	// 恢复上一轮轮换遗留的 previous 密钥（若存在且仍在宽限窗口内），
 	// 保证「轮换 → 重启」后窗口内存量令牌依然可验签
 	loadPreviousFromFiles()
+
+	// 与 DB 同步信道对账（InitDb 先于本函数执行，DB 可用）：
+	// DB 有更新则采纳，本地更新则回推；随后启动后台轮询持续对账
+	if err := fileSyncFromDB(); err != nil {
+		klog.Warningf("file 模式: 启动对账失败（将继续以本地文件密钥运行）: %s", err)
+	}
+	startFileSyncLoop()
 }
 
 // initRsaKeyFromDB DB 密钥模式：多副本共享同一行，保证令牌跨副本可验证。
@@ -245,9 +252,10 @@ func GetRsaKeyInfo() KeyInfo {
 
 // Rotate 生成新密钥并轮换：
 // 旧 current 降级为 previous，宽限窗口（≥ TokenLifeTime）内存量令牌仍可验签。
-// db 模式：事务化写库，其他副本通过"未知 kid 触发惰性同步"在数秒内自动感知，无需重启。
-// file 模式：新密钥原子落盘，previous 密钥持久化到 *-previous.pem（重启后宽限窗口依然有效）；
-// 注意多副本部署时各副本密钥文件独立，轮换仅对当前实例生效（多副本请使用 db 模式）。
+// db 模式：事务化写库，其他副本通过"未知 kid 触发惰性同步 + 后台对账"自动感知，无需重启。
+// file 模式：本实例先落盘（previous 持久化到 *-previous.pem，重启后宽限依然有效），
+// 再把新密钥同步写入 DB 同步信道；其他实例（含 file 模式）通过惰性同步/后台对账
+// 检测到 DB 更新后自动采纳并更新本地密钥文件，多副本亦可保持一致。
 func Rotate(reason string) (KeyInfo, error) {
 	if IsDBMode() {
 		if _, err := rotateInDB(reason); err != nil {
@@ -268,21 +276,45 @@ func Rotate(reason string) (KeyInfo, error) {
 // rotateMux 串行化文件模式轮换，避免并发轮换交错写文件
 var rotateMux sync.Mutex
 
-// rotateMeta previous 密钥的持久化元数据（file 模式）
+// curRotatedAt file 模式下当前密钥的落盘/采纳时间（用于与 DB 同步信道比较新旧）
+var curRotatedAt time.Time
+
+// rotateMeta file 模式轮换状态元数据（conf/rsa-rotate-meta.json）
 type rotateMeta struct {
-	PreviousKid string `json:"previous_kid"`
-	RotatedAt   string `json:"rotated_at"` // RFC3339
+	CurrentKid        string `json:"current_kid"`
+	CurrentRotatedAt  string `json:"current_rotated_at,omitempty"` // RFC3339
+	PreviousKid       string `json:"previous_kid,omitempty"`
+	PreviousRotatedAt string `json:"previous_rotated_at,omitempty"` // RFC3339
 }
 
-// previousKeyPaths 返回 file 模式下 previous 私钥/公钥/元数据的落盘路径
-// （与当前密钥同目录，命名 *-previous.pem / rsa-previous-meta.json）
-func previousKeyPaths() (privPrev, pubPrev, meta string) {
+// previousKeyPaths 返回 file 模式下 previous 私钥/公钥的落盘路径
+func previousKeyPaths() (privPrev, pubPrev string) {
 	privPath := config.Conf.App.RsaPrivateKey
 	pubPath := config.Conf.App.RsaPublicKey
 	privPrev = withPemSuffix(privPath, "-previous.pem")
 	pubPrev = withPemSuffix(pubPath, "-previous.pem")
-	meta = filepath.Join(filepath.Dir(privPath), "rsa-previous-meta.json")
 	return
+}
+
+// rotateMetaPath 轮换状态元数据路径（与密钥同目录）
+func rotateMetaPath() string {
+	return filepath.Join(filepath.Dir(config.Conf.App.RsaPrivateKey), "rsa-rotate-meta.json")
+}
+
+func readRotateMeta() rotateMeta {
+	var m rotateMeta
+	if data, err := os.ReadFile(rotateMetaPath()); err == nil {
+		_ = json.Unmarshal(data, &m)
+	}
+	return m
+}
+
+func writeRotateMeta(m rotateMeta) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(rotateMetaPath(), data, 0644)
 }
 
 func withPemSuffix(p, suffix string) string {
@@ -292,14 +324,44 @@ func withPemSuffix(p, suffix string) string {
 	return p + suffix
 }
 
-// rotateInFiles file 密钥模式在线轮换：
+// rotateInFiles file 密钥模式在线轮换（文件 + DB 同步信道）：
 // 1) 当前密钥降级为 previous 并持久化（重启后宽限窗口依然有效）
 // 2) 新密钥原子落盘（临时文件+rename，避免中断导致半写状态）
 // 3) 内存立即切换，新令牌即时用新密钥签发
+// 4) 新密钥同步写入 DB（rsa_key 表作为多实例同步信道），其他实例检测到 DB 更新后自动跟进；
+//    DB 写入失败仅告警，不影响本实例轮换结果
 func rotateInFiles(reason string) error {
 	rotateMux.Lock()
 	defer rotateMux.Unlock()
 
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("生成 RSA 密钥失败: %w", err)
+	}
+	if err := applyFileRotation(priv, time.Now(), reason); err != nil {
+		return err
+	}
+
+	// 广播到 DB 同步信道（best-effort）
+	newKid := computeKid(&priv.PublicKey)
+	newPrivPEM := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	}))
+	newPubPEM := string(pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: mustMarshalPKIX(&priv.PublicKey),
+	}))
+	if _, err := models.UpsertRsaKeyCurrent(newKid, newPrivPEM, newPubPEM); err != nil {
+		klog.Warningf("file 模式: 新密钥同步写入 DB 失败（本实例轮换仍有效，其他实例暂无法自动跟进）: %s", err)
+	}
+	return nil
+}
+
+// applyFileRotation 将给定新私钥应用为 file 模式 current：
+// 旧 current 落盘为 previous（+元数据），新密钥原子落盘，内存切换。
+// rotatedAt 为新 current 的生效时间（本地轮换=now；从 DB 采纳=DB CreateTime）。
+func applyFileRotation(newPriv *rsa.PrivateKey, rotatedAt time.Time, reason string) error {
 	privPath := config.Conf.App.RsaPrivateKey
 	pubPath := config.Conf.App.RsaPublicKey
 
@@ -316,30 +378,29 @@ func rotateInFiles(reason string) error {
 	})
 	keyMux.RUnlock()
 
-	// 生成新密钥对
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return fmt.Errorf("生成 RSA 密钥失败: %w", err)
-	}
 	newPrivPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+		Bytes: x509.MarshalPKCS1PrivateKey(newPriv),
 	})
 	newPubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
-		Bytes: mustMarshalPKIX(&priv.PublicKey),
+		Bytes: mustMarshalPKIX(&newPriv.PublicKey),
 	})
 
 	// 先持久化 previous，再落新密钥：任一步失败都不影响当前内存中的有效状态
-	prevPrivPath, prevPubPath, metaPath := previousKeyPaths()
+	prevPrivPath, prevPubPath := previousKeyPaths()
 	if err := writeFileAtomic(prevPrivPath, curPrivPEM, 0600); err != nil {
 		return fmt.Errorf("持久化 previous 私钥失败: %w", err)
 	}
 	if err := writeFileAtomic(prevPubPath, curPubPEM, 0644); err != nil {
 		return fmt.Errorf("持久化 previous 公钥失败: %w", err)
 	}
-	metaBytes, _ := json.Marshal(rotateMeta{PreviousKid: curKid, RotatedAt: time.Now().Format(time.RFC3339)})
-	if err := writeFileAtomic(metaPath, metaBytes, 0644); err != nil {
+	if err := writeRotateMeta(rotateMeta{
+		CurrentKid:        computeKid(&newPriv.PublicKey),
+		CurrentRotatedAt:  rotatedAt.Format(time.RFC3339),
+		PreviousKid:       curKid,
+		PreviousRotatedAt: time.Now().Format(time.RFC3339),
+	}); err != nil {
 		return fmt.Errorf("持久化轮换元数据失败: %w", err)
 	}
 	if err := writeFileAtomic(privPath, newPrivPEM, 0600); err != nil {
@@ -350,10 +411,11 @@ func rotateInFiles(reason string) error {
 	}
 
 	// 内存切换：旧 current → previous（宽限窗口），新密钥 → current
-	newKid := computeKid(&priv.PublicKey)
+	newKid := computeKid(&newPriv.PublicKey)
 	keyMux.Lock()
 	prevKid, prevPublicKey, prevExpireAt = curKid, RsaPublicKey, time.Now().Add(graceWindow())
-	RsaPrivateKey, RsaPublicKey, RsaKid = priv, &priv.PublicKey, newKid
+	RsaPrivateKey, RsaPublicKey, RsaKid = newPriv, &newPriv.PublicKey, newKid
+	curRotatedAt = rotatedAt
 	keyMux.Unlock()
 
 	klog.Infof("RSA 密钥已轮换(file): 新 kid=%s 旧 kid=%s 宽限至 %s 原因=%s",
@@ -364,29 +426,20 @@ func rotateInFiles(reason string) error {
 // loadPreviousFromFiles 启动时恢复 previous 密钥：
 // 元数据缺失/损坏、已过宽限窗口、公钥异常或命中开源默认密钥时清理并忽略
 func loadPreviousFromFiles() {
-	prevPrivPath, prevPubPath, metaPath := previousKeyPaths()
-	if !keyExists(prevPubPath) || !keyExists(metaPath) {
+	prevPrivPath, prevPubPath := previousKeyPaths()
+	meta := readRotateMeta()
+	if !keyExists(prevPubPath) || meta.PreviousKid == "" {
 		return
 	}
-	metaBytes, err := os.ReadFile(metaPath)
+	rotatedAt, err := time.Parse(time.RFC3339, meta.PreviousRotatedAt)
 	if err != nil {
-		return
-	}
-	var meta rotateMeta
-	if err := json.Unmarshal(metaBytes, &meta); err != nil || meta.PreviousKid == "" {
-		klog.Warningf("file 模式: 轮换元数据损坏，清理 previous 密钥文件")
-		cleanupPreviousFiles(prevPrivPath, prevPubPath, metaPath)
-		return
-	}
-	rotatedAt, err := time.Parse(time.RFC3339, meta.RotatedAt)
-	if err != nil {
-		cleanupPreviousFiles(prevPrivPath, prevPubPath, metaPath)
+		cleanupPreviousFiles(prevPrivPath, prevPubPath, rotateMetaPath())
 		return
 	}
 	expireAt := rotatedAt.Add(graceWindow())
 	if !time.Now().Before(expireAt) {
 		klog.Infof("file 模式: previous 密钥(kid=%s)已过宽限窗口，清理", meta.PreviousKid)
-		cleanupPreviousFiles(prevPrivPath, prevPubPath, metaPath)
+		cleanupPreviousFiles(prevPrivPath, prevPubPath, rotateMetaPath())
 		return
 	}
 	pubPEM, err := os.ReadFile(prevPubPath)
@@ -396,13 +449,13 @@ func loadPreviousFromFiles() {
 	// 守卫：previous 也绝不允许是已泄露的开源默认公钥
 	if isCompromisedPublicKeyPEM(pubPEM) {
 		klog.Warningf("file 模式: previous 公钥为开源默认密钥，直接清理（不进入验签窗口）")
-		cleanupPreviousFiles(prevPrivPath, prevPubPath, metaPath)
+		cleanupPreviousFiles(prevPrivPath, prevPubPath, rotateMetaPath())
 		return
 	}
 	pub, err := jwt.ParseRSAPublicKeyFromPEM(pubPEM)
 	if err != nil || computeKid(pub) != meta.PreviousKid {
 		klog.Warningf("file 模式: previous 公钥解析/指纹校验失败，清理")
-		cleanupPreviousFiles(prevPrivPath, prevPubPath, metaPath)
+		cleanupPreviousFiles(prevPrivPath, prevPubPath, rotateMetaPath())
 		return
 	}
 
@@ -496,12 +549,128 @@ func syncFromDB() error {
 	return nil
 }
 
+// fileSyncFromDB file 模式与 DB 同步信道对账（DB 作为多实例密钥广播载体）：
+//  - DB 无 current：把本地 current 推送入库（让其他实例/未来 db 模式副本可跟进）
+//  - DB current 与本地一致：补齐内存缺失的 previous（宽限窗口对齐）
+//  - DB current 更新（CreateTime 晚于本地落盘时间）：采纳 DB 密钥——旧本地密钥降级
+//    previous 落盘，本地文件同步改写为 DB 密钥（即"检测到 DB 有更新，自动更新本实例密钥"）
+//  - 本地更新（如本实例轮换时 DB 写入失败）：把本地 current 回推入库
+func fileSyncFromDB() error {
+	if models.DB == nil {
+		return nil
+	}
+	current, previous, err := models.LoadRsaKeys(graceWindow())
+	if err != nil {
+		return err
+	}
+
+	keyMux.RLock()
+	localKid := RsaKid
+	localRotatedAt := curRotatedAt
+	keyMux.RUnlock()
+
+	// DB 空：推送本地 current 入库
+	if current == nil {
+		keyMux.RLock()
+		privPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(RsaPrivateKey),
+		})
+		pubPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "PUBLIC KEY",
+			Bytes: mustMarshalPKIX(RsaPublicKey),
+		})
+		k, pv, pb := RsaKid, string(privPEM), string(pubPEM)
+		keyMux.RUnlock()
+		if _, err := models.UpsertRsaKeyCurrent(k, pv, pb); err != nil {
+			return err
+		}
+		klog.Infof("file 模式: 本地密钥(kid=%s)已推送 DB 同步信道", k)
+		return nil
+	}
+
+	// 一致：补齐内存缺失的 previous（其他实例轮换后的宽限窗口对齐）
+	if current.Kid == localKid {
+		keyMux.RLock()
+		noPrev := prevKid == ""
+		keyMux.RUnlock()
+		if noPrev && previous != nil && previous.RotateTime != nil &&
+			time.Now().Before(previous.RotateTime.Add(graceWindow())) {
+			prevPub, err := jwt.ParseRSAPublicKeyFromPEM([]byte(previous.PublicKey))
+			if err == nil && computeKid(prevPub) == previous.Kid && !isCompromisedPublicKeyPEM([]byte(previous.PublicKey)) {
+				keyMux.Lock()
+				if prevKid == "" { // 双检，避免与本地轮换竞争
+					prevKid, prevPublicKey = previous.Kid, prevPub
+					prevExpireAt = previous.RotateTime.Add(graceWindow())
+				}
+				keyMux.Unlock()
+				klog.Infof("file 模式: 从 DB 补齐 previous 密钥 kid=%s", previous.Kid)
+			}
+		}
+		return nil
+	}
+
+	// 不一致：按时间判定谁是最新
+	dbRotatedAt := time.Time{}
+	if current.CreateTime != nil {
+		dbRotatedAt = *current.CreateTime
+	}
+	if !localRotatedAt.IsZero() && localRotatedAt.After(dbRotatedAt) {
+		// 本地更新（轮换时 DB 广播失败的补救）：回推入库
+		keyMux.RLock()
+		privPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(RsaPrivateKey),
+		})
+		pubPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "PUBLIC KEY",
+			Bytes: mustMarshalPKIX(RsaPublicKey),
+		})
+		k, pv, pb := RsaKid, string(privPEM), string(pubPEM)
+		keyMux.RUnlock()
+		if _, err := models.UpsertRsaKeyCurrent(k, pv, pb); err != nil {
+			return err
+		}
+		klog.Infof("file 模式: 本地密钥(kid=%s)较 DB 新，已回推同步信道", k)
+		return nil
+	}
+
+	// DB 更新：采纳（旧本地密钥降级 previous 落盘，本地文件改写为 DB 密钥）
+	dbPriv, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(current.PrivateKey))
+	if err != nil {
+		return fmt.Errorf("DB 同步信道私钥解析失败(kid=%s): %w", current.Kid, err)
+	}
+	if computeKid(&dbPriv.PublicKey) != current.Kid {
+		return fmt.Errorf("DB 同步信道密钥 kid(%s) 与公钥指纹不一致，跳过采纳", current.Kid)
+	}
+	if err := applyFileRotation(dbPriv, dbRotatedAt, "DB 同步信道更新采纳"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// startFileSyncLoop file 模式后台对账：每 30s 检查 DB 同步信道是否有更新，
+// 有则自动更新本实例密钥（内存+本地文件），无需重启
+func startFileSyncLoop() {
+	if models.DB == nil {
+		klog.Warning("file 模式: DB 不可用，密钥同步信道停用（退化为纯文件模式）")
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := fileSyncFromDB(); err != nil {
+				klog.Warningf("file 模式: DB 同步对账失败: %s", err)
+			}
+		}
+	}()
+}
+
 // SyncFromDBIfStale 收到未知 kid 时的节流同步：最多每 minSyncInterval 尝试一次。
+// db 模式重读库并应用；file 模式与 DB 同步信道对账（采纳/回推）。
 // 返回 true 表示同步后密钥状态已更新（调用方可重试验证）。
 func SyncFromDBIfStale() bool {
-	if !IsDBMode() {
-		return false
-	}
 	syncThrottle.Lock()
 	if time.Since(syncThrottle.at) < minSyncInterval {
 		syncThrottle.Unlock()
@@ -510,8 +679,18 @@ func SyncFromDBIfStale() bool {
 	syncThrottle.at = time.Now()
 	syncThrottle.Unlock()
 
-	if err := syncFromDB(); err != nil {
-		klog.Warningf("惰性同步密钥失败: %s", err)
+	if IsDBMode() {
+		if err := syncFromDB(); err != nil {
+			klog.Warningf("惰性同步密钥失败: %s", err)
+			return false
+		}
+		return true
+	}
+	if models.DB == nil {
+		return false
+	}
+	if err := fileSyncFromDB(); err != nil {
+		klog.Warningf("file 模式: 惰性同步对账失败: %s", err)
 		return false
 	}
 	return true

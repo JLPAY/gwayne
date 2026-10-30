@@ -135,3 +135,71 @@ func RotateRsaKey(generate func() (kid, privatePEM, publicPEM string, err error)
 	}
 	return created, nil
 }
+
+// UpsertRsaKeyCurrent 将调用方给定的密钥对作为 current 写入库（file 密钥模式的同步信道）：
+//  1. MySQL 咨询锁 + 行锁，串行化并发写入
+//  2. 若库中 current 已是该 kid → 幂等成功（不重复降级）
+//  3. 否则旧 current 降级为 previous（rotate_time=now），更早的 previous 删除
+//  4. 写入给定密钥为新 current
+//
+// 用于 file 模式轮换后把新密钥广播到 DB，其他实例据此自动跟进。
+func UpsertRsaKeyCurrent(kid, privatePEM, publicPEM string) (*RsaKey, error) {
+	var created *RsaKey
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT GET_LOCK(?, 30)", rsaKeyRotateLockName).Error; err != nil {
+			return err
+		}
+		defer tx.Exec("SELECT RELEASE_LOCK(?)", rsaKeyRotateLockName)
+
+		// 幂等：current 已是该 kid，无需变更
+		var cur RsaKey
+		err := tx.Where("status = ?", RsaKeyStatusCurrent).Order("id").First(&cur).Error
+		if err == nil {
+			if cur.Kid == kid {
+				created = &cur
+				return nil
+			}
+		} else if err != gorm.ErrRecordNotFound {
+			return err
+		}
+
+		// 行锁现存密钥，串行化并发变更
+		var keys []RsaKey
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("status IN ?", []string{RsaKeyStatusCurrent, RsaKeyStatusPrevious}).
+			Find(&keys).Error; err != nil {
+			return err
+		}
+
+		now := time.Now()
+		for i := range keys {
+			k := &keys[i]
+			switch k.Status {
+			case RsaKeyStatusCurrent:
+				if err := tx.Model(&RsaKey{}).Where("id = ?", k.Id).
+					Updates(map[string]interface{}{
+						"status":      RsaKeyStatusPrevious,
+						"rotate_time": now,
+					}).Error; err != nil {
+					return err
+				}
+			case RsaKeyStatusPrevious:
+				if err := tx.Delete(&RsaKey{}, k.Id).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		created = &RsaKey{
+			Kid:        kid,
+			PrivateKey: privatePEM,
+			PublicKey:  publicPEM,
+			Status:     RsaKeyStatusCurrent,
+		}
+		return tx.Create(created).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
+}
