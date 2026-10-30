@@ -36,7 +36,9 @@ func (c *LDAPClient) SearchUsers(filter, username string) ([]*ldap.Entry, error)
 
 	attributes := []string{"uid", "cn", "mail", "email"}
 
-	filterString := strings.Replace(filter, "%s", username, -1)
+	// username 来自登录表单，必须转义后再拼入过滤器，
+	// 否则可注入未平衡括号/通配符做存在性枚举（LDAP 注入）
+	filterString := strings.Replace(filter, "%s", ldap.EscapeFilter(username), -1)
 	//klog.Infof("filterString: %s", filterString)
 
 	// 查询用户信息（根据实际情况调整查询方式）
@@ -97,7 +99,7 @@ func (c *LDAPClient) EnsureUidExists(uid string) (int, error) {
 		c.BaseDN,
 		ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false,
 		//"(&(objectClass=Person))",
-		fmt.Sprintf("(&(objectClass=Person)(uid=%s))", uid),
+		fmt.Sprintf("(&(objectClass=Person)(uid=%s))", ldap.EscapeFilter(uid)),
 		[]string{"dn"},
 		nil,
 	)
