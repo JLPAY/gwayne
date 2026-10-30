@@ -1,11 +1,12 @@
 package configs
 
 import (
-	"github.com/JLPAY/gwayne/pkg/config"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"reflect"
 	"strings"
+
+	"github.com/JLPAY/gwayne/pkg/config"
+	"github.com/gin-gonic/gin"
 )
 
 // @Title GetConfig
@@ -30,9 +31,25 @@ func convertToJSON(config config.Config) ResponseResult {
 	return ResponseResult{output}
 }
 
+// sensitiveKeyWords 命中即脱敏：签名密钥、私钥路径、凭据、数据库连接、LDAP 绑定 DN 等
+var sensitiveKeyWords = []string{
+	"password", "secret", "appkey", "privatekey", "binddn",
+	"database.host", "database.dbuser", "database.dbname", "database.charset",
+}
+
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, w := range sensitiveKeyWords {
+		if strings.Contains(lower, w) {
+			return true
+		}
+	}
+	return false
+}
+
 func buildJSONMap(v reflect.Value, output map[string]interface{}, parentKey string) {
-	// 确保 v 是一个结构体
-	if v.Kind() == reflect.Struct {
+	switch v.Kind() {
+	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
 			field := v.Type().Field(i)
 			fieldValue := v.Field(i)
@@ -44,19 +61,34 @@ func buildJSONMap(v reflect.Value, output map[string]interface{}, parentKey stri
 			// 生成新的键
 			newKey := parentKey + jsonTag
 
-			// 检查字段名是否包含 "password" 或 "secret"
-			if strings.Contains(strings.ToLower(newKey), "password") ||
-				strings.Contains(strings.ToLower(newKey), "secret") {
-				// 替换为 "*******"
-				output[newKey] = "*******" // 替换为 "*****"
+			if isSensitiveKey(newKey) {
+				output[newKey] = "*******"
+				continue
+			}
+
+			if fieldValue.Kind() == reflect.Struct || fieldValue.Kind() == reflect.Map {
+				// 嵌套结构体/Map 递归处理（如 Auth.Oauth2 是 map，需深入脱敏）
+				buildJSONMap(fieldValue, output, newKey+".")
 			} else {
-				if fieldValue.Kind() == reflect.Struct {
-					// 递归处理嵌套结构体
-					buildJSONMap(fieldValue, output, newKey+".")
-				} else {
-					// 直接添加到输出
-					output[newKey] = fieldValue.Interface()
-				}
+				output[newKey] = fieldValue.Interface()
+			}
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			key := k.Interface()
+			keyStr := reflect.ValueOf(key).String()
+			newKey := parentKey + keyStr
+			mapValue := v.MapIndex(k)
+
+			if isSensitiveKey(newKey) {
+				output[newKey] = "*******"
+				continue
+			}
+
+			if mapValue.Kind() == reflect.Struct || mapValue.Kind() == reflect.Map {
+				buildJSONMap(mapValue, output, newKey+".")
+			} else {
+				output[newKey] = mapValue.Interface()
 			}
 		}
 	}

@@ -28,13 +28,10 @@ func InitRouter() *gin.Engine {
 
 	gin.SetMode(config.Conf.App.RunMode)
 
+	// 健康检查：只暴露探活结果，不暴露数据库等内部组件状态（避免未授权探测内网拓扑）
 	r.GET("/healthz", func(c *gin.Context) {
-		// 这里可以添加数据库连接检查、外部服务检查等
-		// 假设健康检查通过，可以返回正常状态
 		c.JSON(200, gin.H{
-			"status":   "ok",
-			"database": "connected", // 可以加上数据库连接状态
-			"uptime":   "72 hours",  // 服务器运行时间
+			"status": "ok",
 		})
 	})
 
