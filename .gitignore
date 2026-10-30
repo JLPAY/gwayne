@@ -8,7 +8,5 @@ docs/project-doc.md
 # 本地密钥副本（运行时使用 conf/rsa-*.pem）
 apikey/
 
-# 运行时 RSA 密钥对（每次部署唯一生成，禁止入库）
-conf/rsa-private.pem
-conf/rsa-public.pem
-conf/rsa-kid*
+# 运行时 RSA 密钥对（每次部署唯一生成，禁止入库；含轮换后的 previous 密钥与元数据）
+conf/rsa-*
