@@ -99,6 +99,7 @@ func dbAutoMigrate() error {
 		&LLMModel{},
 		&PodDiagnosisReport{},
 		&TerminalCommandRule{},
+		&RsaKey{},
 		/*&model.Role{},
 		&model.Group{},
 		&model.Menu{},

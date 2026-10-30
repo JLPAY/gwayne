@@ -26,6 +26,8 @@ type AppConf struct {
 	RunMode       string `ini:"RunMode"`
 	RsaPrivateKey string `ini:"RsaPrivateKey"`
 	RsaPublicKey  string `ini:"RsaPublicKey"`
+	// RsaKeyStore 密钥存储方式：file（默认，读本地文件，多副本需共享同一密钥文件）| db（存数据库，多副本自动一致）
+	RsaKeyStore   string `ini:"RsaKeyStore"`
 	TokenLifeTime int64  `ini:"TokenLifeTime"`
 	AppKey        string `ini:"AppKey"`
 }

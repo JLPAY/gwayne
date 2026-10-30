@@ -286,12 +286,17 @@ func CurrentUser(c *gin.Context) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		// 密钥绑定：仅接受当前生效公钥对应的 kid
-		if kid, _ := token.Header["kid"].(string); kid != rsakey.RsaKid {
+		// 密钥绑定：仅接受当前生效公钥（current）或宽限窗口内的 previous
+		kid, _ := token.Header["kid"].(string)
+		pub, ok := rsakey.PublicKeyForKid(kid)
+		if !ok && rsakey.SyncFromDBIfStale() {
+			// db 密钥模式下其他副本刚完成轮换：同步后重试
+			pub, ok = rsakey.PublicKeyForKid(kid)
+		}
+		if !ok {
 			return nil, fmt.Errorf("unexpected key id")
 		}
-		// 使用公钥验证签名
-		return rsakey.RsaPublicKey, nil
+		return pub, nil
 	})
 	if err != nil || !token.Valid {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
