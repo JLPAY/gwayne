@@ -42,6 +42,9 @@ func (cell PodCell) GetProperty(name dataselector.PropertyName) dataselector.Com
 		return dataselector.StdComparableString(cell.Status.PodIP)
 	case dataselector.NodeNameProperty:
 		return dataselector.StdComparableString(cell.Spec.NodeName)
+	case dataselector.StatusProperty:
+		// 按界面展示的「有效状态」排序（Terminating/未就绪原因等），保证排序结果与状态列文案一致
+		return dataselector.StdComparableString(common.EffectivePodStatus((*corev1.Pod)(&cell)))
 	case dataselector.StatusPhaseProperty:
 		// Return pod status phase (Running, Pending, Succeeded, Failed, Unknown, etc.)
 		return dataselector.StdComparableString(string(cell.Status.Phase))

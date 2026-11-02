@@ -71,8 +71,18 @@ func (ds DataSelector) Less(i, j int) bool {
 		}
 		cmp := a.Compare(b)
 		if cmp == 0 {
-			// 如果值相同，则无需交换位置
-			return false
+			// 属性值相同（例如同为 Running 的 Pod）：再按 name 兜底排序，
+			// 避免不稳定排序导致同一状态下记录在分页间来回跳动
+			na := ds.GenericDataList[i].GetProperty(NameProperty)
+			nb := ds.GenericDataList[j].GetProperty(NameProperty)
+			if na == nil || nb == nil {
+				return false
+			}
+			ncmp := na.Compare(nb)
+			if ncmp == 0 {
+				return false
+			}
+			return (ncmp == -1 && asc) || (ncmp == 1 && !asc)
 		} else {
 			// 返回是否需要交换，依据升序或降序
 			return (cmp == -1 && asc) || (cmp == 1 && !asc)

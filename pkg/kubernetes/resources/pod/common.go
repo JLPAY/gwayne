@@ -1,6 +1,7 @@
 package pod
 
 import (
+	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/common"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/resources/dataselector"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -17,7 +18,8 @@ func (cell ObjectCell) GetProperty(name dataselector.PropertyName) dataselector.
 	case dataselector.NamespaceProperty:
 		return dataselector.StdComparableString(cell.ObjectMeta.Namespace)
 	case dataselector.StatusProperty:
-		return dataselector.StdComparableString(cell.Status.Phase)
+		// 按界面展示的「有效状态」排序，与状态列文案保持一致
+		return dataselector.StdComparableString(common.EffectivePodStatus((*corev1.Pod)(&cell)))
 	case "podIP":
 		return dataselector.StdComparableString(cell.Status.PodIP)
 	default:
