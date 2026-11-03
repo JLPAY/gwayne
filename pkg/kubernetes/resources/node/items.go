@@ -11,7 +11,6 @@ const (
 	ItemPressure      InspectItemType = "pressure"        // 节点压力条件（Memory/Disk/PID Pressure）
 	ItemFD            InspectItemType = "fd"              // 文件描述符使用率（node_filefd）
 	ItemPod           InspectItemType = "pod"             // Pod 数量 / 可分配上限
-	ItemCertKubelet   InspectItemType = "cert_kubelet"    // kubelet serving 证书过期（逐节点）
 	ItemCertAPIServer InspectItemType = "cert_apiserver"  // API Server serving 证书过期（集群级）
 )
 
@@ -38,7 +37,6 @@ var ItemRegistry = []ItemMeta{
 	{Type: ItemPressure, Name: "MENU.NODE_INSPECT.PRESSURE", Unit: "", DefaultWarning: 0, DefaultCritical: 0, EnabledByDefault: true, Source: "node-status"},
 	{Type: ItemFD, Name: "MENU.NODE_INSPECT.FD", Unit: "%", DefaultWarning: 80, DefaultCritical: 90, EnabledByDefault: true, Source: "prometheus"},
 	{Type: ItemPod, Name: "MENU.NODE_INSPECT.POD", Unit: "%", DefaultWarning: 80, DefaultCritical: 90, EnabledByDefault: true, Source: "k8s-api"},
-	{Type: ItemCertKubelet, Name: "MENU.NODE_INSPECT.CERT_KUBELET", Unit: "天", DefaultWarning: 30, DefaultCritical: 7, EnabledByDefault: true, Source: "tls", Invert: true},
 	{Type: ItemCertAPIServer, Name: "MENU.NODE_INSPECT.CERT_APISERVER", Unit: "天", DefaultWarning: 30, DefaultCritical: 7, EnabledByDefault: true, Source: "tls", ClusterScoped: true, Invert: true},
 }
 

@@ -348,27 +348,6 @@ func inspectOneNode(ctx context.Context, clientset kubernetes.Interface, n *v1.N
 		}
 	}
 
-	// kubelet 证书
-	if th, ok := plan[ItemCertKubelet]; ok && th.Enabled {
-		ip := nodeInternalIP(n)
-		if ip == "" {
-			checks = append(checks, unavailableCheck(ItemCertKubelet, "节点无 InternalIP"))
-		} else {
-			na, subj, err := GetCertExpiry(ip + ":10250")
-			if err != nil {
-				checks = append(checks, unavailableCheck(ItemCertKubelet, err.Error()))
-			} else {
-				days := daysBetween(time.Now(), na)
-				value := fmt.Sprintf("还有 %.0f 天", days)
-				if days < 0 {
-					value = fmt.Sprintf("已过期 %.0f 天", -days)
-				}
-				detail := fmt.Sprintf("subject=%s, NotAfter=%s", subj, na.Format("2006-01-02 15:04:05"))
-				checks = append(checks, invertCheck(ItemCertKubelet, days, th, value, detail))
-			}
-		}
-	}
-
 	item.Checks = checks
 	item.Status = worstStatusOfChecks(checks)
 	return item
@@ -424,16 +403,6 @@ func isNodeReady(n *v1.Node) bool {
 		}
 	}
 	return false
-}
-
-// nodeInternalIP 取节点 InternalIP
-func nodeInternalIP(n *v1.Node) string {
-	for _, addr := range n.Status.Addresses {
-		if addr.Type == v1.NodeInternalIP {
-			return addr.Address
-		}
-	}
-	return ""
 }
 
 // normInst 归一化 instance（去 :port、转小写）以便与节点名匹配

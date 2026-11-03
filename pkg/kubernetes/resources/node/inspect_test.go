@@ -24,15 +24,15 @@ func TestUsageCheck(t *testing.T) {
 func TestInvertCheck(t *testing.T) {
 	th := ItemThreshold{Enabled: true, Warning: 30, Critical: 7}
 	// 剩余天数越少越危险
-	c := invertCheck(ItemCertKubelet, 5, th, "还有 5 天", "")
+	c := invertCheck(ItemCertAPIServer, 5, th, "还有 5 天", "")
 	if c.Status != StatusCritical {
 		t.Errorf("剩余5天应为 critical，实际 %s", c.Status)
 	}
-	c = invertCheck(ItemCertKubelet, 20, th, "还有 20 天", "")
+	c = invertCheck(ItemCertAPIServer, 20, th, "还有 20 天", "")
 	if c.Status != StatusWarning {
 		t.Errorf("剩余20天应为 warning，实际 %s", c.Status)
 	}
-	c = invertCheck(ItemCertKubelet, 100, th, "还有 100 天", "")
+	c = invertCheck(ItemCertAPIServer, 100, th, "还有 100 天", "")
 	if c.Status != StatusOK {
 		t.Errorf("剩余100天应为 ok，实际 %s", c.Status)
 	}

@@ -16,25 +16,25 @@ func TestBuildPlanDefaults(t *testing.T) {
 	if !ok || !th.Enabled || th.Warning != 80 || th.Critical != 90 {
 		t.Errorf("memory 默认值错误: %+v", th)
 	}
-	cert, ok := plan[k8snode.ItemCertKubelet]
+	cert, ok := plan[k8snode.ItemCertAPIServer]
 	if !ok || !(cert.Warning > cert.Critical) {
-		t.Errorf("kubelet 证书默认阈值应为 warning(30) > critical(7): %+v", cert)
+		t.Errorf("API Server 证书默认阈值应为 warning(30) > critical(7): %+v", cert)
 	}
 }
 
 func TestBuildPlanOverride(t *testing.T) {
 	cfg := &models.NodeInspectConfig{
 		Items: `[{"type":"memory","enabled":false,"warning":70,"critical":85},
-		         {"type":"cert_kubelet","enabled":true,"warning":60,"critical":14}]`,
+		         {"type":"cert_apiserver","enabled":true,"warning":60,"critical":14}]`,
 	}
 	plan := BuildPlan(cfg)
 	m := plan[k8snode.ItemMemory]
 	if m.Enabled || m.Warning != 70 || m.Critical != 85 {
 		t.Errorf("memory 覆盖失败: %+v", m)
 	}
-	c := plan[k8snode.ItemCertKubelet]
+	c := plan[k8snode.ItemCertAPIServer]
 	if !c.Enabled || c.Warning != 60 || c.Critical != 14 {
-		t.Errorf("cert_kubelet 覆盖失败: %+v", c)
+		t.Errorf("cert_apiserver 覆盖失败: %+v", c)
 	}
 	// 未覆盖的项保持默认
 	d := plan[k8snode.ItemDisk]
