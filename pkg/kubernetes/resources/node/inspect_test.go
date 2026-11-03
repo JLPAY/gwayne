@@ -56,4 +56,3 @@ func TestInspectResultErrorField(t *testing.T) {
 	ok := InspectNodes
 	_ = ok
 }
-

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/JLPAY/gwayne/models"
+	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	k8snode "github.com/JLPAY/gwayne/pkg/kubernetes/resources/node"
 	"github.com/gin-gonic/gin"
@@ -68,7 +69,7 @@ func inspectCluster(ctx context.Context, cluster string, warning, critical int) 
 	if err != nil {
 		return nil, err
 	}
-	r, err := k8snode.InspectNodes(ctx, clientset, warning, critical)
+	r, err := k8snode.InspectNodes(ctx, clientset, config.Conf.Monitor.PrometheusURL, config.Conf.Monitor.PrometheusToken, warning, critical)
 	if err != nil {
 		return nil, err
 	}

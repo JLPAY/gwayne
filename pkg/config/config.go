@@ -12,10 +12,19 @@ import (
 var Conf = new(Config)
 
 type Config struct {
-	App      AppConf  `ini:"App"`
-	DataBase DataBase `ini:"DataBase"`
-	Log      LogConf  `ini:"Log"`
-	Auth     Auth     `ini:"Auth"`
+	App      AppConf    `ini:"App"`
+	DataBase DataBase   `ini:"DataBase"`
+	Log      LogConf    `ini:"Log"`
+	Auth     Auth       `ini:"Auth"`
+	Monitor  MonitorConf `ini:"Monitor"`
+}
+
+// MonitorConf 监控数据源配置（节点巡检的磁盘使用率来自 Prometheus node-exporter）
+type MonitorConf struct {
+	// PrometheusURL Prometheus 查询地址（到 /api/v1/query 的上一级，例如 https://host/select/0:0/prometheus）
+	PrometheusURL string `ini:"PrometheusURL"`
+	// PrometheusToken 可选，Bearer Token；为空表示匿名访问
+	PrometheusToken string `ini:"PrometheusToken"`
 }
 
 type AppConf struct {
