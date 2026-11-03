@@ -12,6 +12,7 @@ import (
 	"github.com/JLPAY/gwayne/controllers/kubernetes/pod"
 	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/initial"
+	"github.com/JLPAY/gwayne/pkg/inspect"
 	"github.com/JLPAY/gwayne/pkg/rsakey"
 	"github.com/JLPAY/gwayne/routers"
 	"k8s.io/klog/v2"
@@ -32,6 +33,9 @@ func main() {
 
 	// 初始化 K8S Client
 	initial.InitClient()
+
+	// 启动节点巡检定时调度器（按配置周期巡检全部集群并落历史）
+	inspect.StartScheduler()
 
 	// 启动shell缓存清理
 	pod.CleanupShellCache()

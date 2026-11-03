@@ -101,6 +101,7 @@ func dbAutoMigrate() error {
 		&TerminalCommandRule{},
 		&RsaKey{},
 		&NodeInspectConfig{},
+		&NodeInspectHistory{},
 		/*&model.Role{},
 		&model.Group{},
 		&model.Menu{},

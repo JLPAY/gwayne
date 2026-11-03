@@ -1,48 +1,72 @@
 package node
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func TestEvaluateStatus(t *testing.T) {
-	cases := []struct {
-		name     string
-		memPct   float64
-		diskPct  float64
-		ready    bool
-		warning  int
-		critical int
-		want     string
-	}{
-		{"全部健康", 10, 20, true, 80, 90, StatusOK},
-		{"内存触告警", 85, 20, true, 80, 90, StatusWarning},
-		{"磁盘触严重", 10, 95, true, 80, 90, StatusCritical},
-		{"双高取严重", 88, 92, true, 80, 90, StatusCritical},
-		{"NotReady 标告警", 10, 20, false, 80, 90, StatusWarning},
-		{"NotReady 且内存严重", 95, 20, false, 80, 90, StatusCritical},
+func TestUsageCheck(t *testing.T) {
+	th := ItemThreshold{Enabled: true, Warning: 80, Critical: 90}
+	c := usageCheck(ItemMemory, 85, th, "85%", "")
+	if c.Status != StatusWarning {
+		t.Errorf("85%% 应为 warning，实际 %s", c.Status)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, _ := evaluateStatus(c.memPct, c.diskPct, c.ready, c.warning, c.critical)
-			if got != c.want {
-				t.Errorf("evaluateStatus(%v,%v,%v,%d,%d)=%s, want %s", c.memPct, c.diskPct, c.ready, c.warning, c.critical, got, c.want)
-			}
-		})
+	c = usageCheck(ItemMemory, 95, th, "95%", "")
+	if c.Status != StatusCritical {
+		t.Errorf("95%% 应为 critical，实际 %s", c.Status)
+	}
+	c = usageCheck(ItemMemory, 50, th, "50%", "")
+	if c.Status != StatusOK {
+		t.Errorf("50%% 应为 ok，实际 %s", c.Status)
 	}
 }
 
-func TestRound1(t *testing.T) {
-	cases := []struct {
-		in   float64
-		want float64
-	}{
-		{83.3333, 83.3},
-		{90.0, 90.0},
-		{0.0, 0.0},
-		{12.345, 12.3},
+func TestInvertCheck(t *testing.T) {
+	th := ItemThreshold{Enabled: true, Warning: 30, Critical: 7}
+	// 剩余天数越少越危险
+	c := invertCheck(ItemCertKubelet, 5, th, "还有 5 天", "")
+	if c.Status != StatusCritical {
+		t.Errorf("剩余5天应为 critical，实际 %s", c.Status)
 	}
-	for _, c := range cases {
-		if got := round1(c.in); got != c.want {
-			t.Errorf("round1(%v)=%v, want %v", c.in, got, c.want)
-		}
+	c = invertCheck(ItemCertKubelet, 20, th, "还有 20 天", "")
+	if c.Status != StatusWarning {
+		t.Errorf("剩余20天应为 warning，实际 %s", c.Status)
+	}
+	c = invertCheck(ItemCertKubelet, 100, th, "还有 100 天", "")
+	if c.Status != StatusOK {
+		t.Errorf("剩余100天应为 ok，实际 %s", c.Status)
+	}
+}
+
+func TestWorstStatusOfChecks(t *testing.T) {
+	checks := []CheckResult{
+		{Status: StatusOK},
+		{Status: StatusWarning},
+		{Status: StatusOK},
+	}
+	if s := worstStatusOfChecks(checks); s != StatusWarning {
+		t.Errorf("应为 warning，实际 %s", s)
+	}
+	checks = append(checks, CheckResult{Status: StatusCritical})
+	if s := worstStatusOfChecks(checks); s != StatusCritical {
+		t.Errorf("应为 critical，实际 %s", s)
+	}
+}
+
+func TestNormInst(t *testing.T) {
+	if got := normInst("NodeA:9100"); got != "nodea" {
+		t.Errorf("normInst(nodea:9100) 应为 nodea，实际 %s", got)
+	}
+	if got := normInst("NodeB"); got != "nodeb" {
+		t.Errorf("normInst(NodeB) 应为 nodeb，实际 %s", got)
+	}
+}
+
+func TestDaysBetween(t *testing.T) {
+	now := time.Now()
+	got := daysBetween(now, now.AddDate(0, 0, 23))
+	if got != 23 {
+		t.Errorf("剩余 23 天，实际 %.0f", got)
 	}
 }
 
@@ -52,7 +76,4 @@ func TestInspectResultErrorField(t *testing.T) {
 	if r.Error != "boom" {
 		t.Errorf("expected Error field set, got %q", r.Error)
 	}
-	// InspectNodes 正常路径会初始化 Items 为非空切片；失败路径允许为 nil（序列化为 null）
-	ok := InspectNodes
-	_ = ok
 }

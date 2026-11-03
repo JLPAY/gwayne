@@ -3,25 +3,25 @@ package node
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"sync"
 
 	"github.com/JLPAY/gwayne/models"
 	"github.com/JLPAY/gwayne/pkg/config"
+	"github.com/JLPAY/gwayne/pkg/inspect"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
 	k8snode "github.com/JLPAY/gwayne/pkg/kubernetes/resources/node"
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
 )
 
-// Inspect 巡检节点内存与磁盘使用率
-// GET /api/v1/kubernetes/nodes/inspect?cluster=UAT&warning=80&critical=90
+// Inspect 巡检节点（按 DB 中可配置巡检项执行）
+// GET /api/v1/kubernetes/nodes/inspect?cluster=UAT
 //
-// cluster 为空时遍历所有已注册集群；warning/critical 不传则取 DB 中持久化配置，
-// 传参则临时覆盖（仅本次请求生效，不写库）。
+// cluster 为空时遍历所有已注册集群。巡检项与阈值取 /api/v1/configs/node-inspect 配置。
 func Inspect(c *gin.Context) {
 	cluster := c.Query("cluster")
-	warning, critical := resolveThresholds(c)
+	cfg := models.GetNodeInspectConfig()
+	plan := inspect.BuildPlan(cfg)
 
 	if cluster == "" {
 		managers := client.Managers()
@@ -31,11 +31,14 @@ func Inspect(c *gin.Context) {
 			results []k8snode.NodeInspectionResult
 		)
 		managers.Range(func(key, value interface{}) bool {
-			clu := key.(string)
+			clu, ok := key.(string)
+			if !ok {
+				return true
+			}
 			wg.Add(1)
 			go func(clu string) {
 				defer wg.Done()
-				r, err := inspectCluster(context.TODO(), clu, warning, critical)
+				r, err := inspectCluster(context.TODO(), clu, plan)
 				if err != nil {
 					klog.Errorf("巡检集群 %s 失败: %v", clu, err)
 					mu.Lock()
@@ -54,7 +57,7 @@ func Inspect(c *gin.Context) {
 		return
 	}
 
-	r, err := inspectCluster(context.TODO(), cluster, warning, critical)
+	r, err := inspectCluster(context.TODO(), cluster, plan)
 	if err != nil {
 		klog.Errorf("巡检集群 %s 失败: %v", cluster, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -63,33 +66,19 @@ func Inspect(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": []k8snode.NodeInspectionResult{*r}})
 }
 
-// inspectCluster 巡检单个集群，返回该集群结果；集群客户端不可用时返回错误。
-func inspectCluster(ctx context.Context, cluster string, warning, critical int) (*k8snode.NodeInspectionResult, error) {
-	clientset, err := client.Client(cluster)
+// inspectCluster 巡检单个集群；需要 manager 同时提供 clientset 与 rest.Config（API Server 证书巡检）。
+func inspectCluster(ctx context.Context, cluster string, plan map[k8snode.InspectItemType]k8snode.ItemThreshold) (*k8snode.NodeInspectionResult, error) {
+	mgr, err := client.Manager(cluster)
 	if err != nil {
 		return nil, err
 	}
-	r, err := k8snode.InspectNodes(ctx, clientset, config.Conf.Monitor.PrometheusURL, config.Conf.Monitor.PrometheusToken, warning, critical)
+	r, err := k8snode.InspectNodes(ctx, mgr.Client,
+		config.Conf.Monitor.PrometheusURL,
+		config.Conf.Monitor.PrometheusToken,
+		mgr.Config, plan)
 	if err != nil {
 		return nil, err
 	}
 	r.Cluster = cluster
 	return r, nil
-}
-
-// resolveThresholds 读取 DB 持久化阈值，query 参数可临时覆盖。
-func resolveThresholds(c *gin.Context) (warning, critical int) {
-	cfg := models.GetNodeInspectConfig()
-	warning, critical = cfg.Warning, cfg.Critical
-	if w := c.Query("warning"); w != "" {
-		if v, err := strconv.Atoi(w); err == nil && v > 0 && v < 100 {
-			warning = v
-		}
-	}
-	if cr := c.Query("critical"); cr != "" {
-		if v, err := strconv.Atoi(cr); err == nil && v > warning && v <= 100 {
-			critical = v
-		}
-	}
-	return
 }
