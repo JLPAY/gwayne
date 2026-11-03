@@ -52,5 +52,8 @@ func SetupKubernetesNodeRoutes(rg *gin.RouterGroup) {
 
 		// 获取节点统计信息
 		nodeGroup.GET("/statistics", node.NodeStatistics)
+
+		// 节点巡检：内存与磁盘使用率（阈值取 DB 配置，支持 query 覆盖）
+		nodeGroup.GET("/inspect", node.Inspect)
 	}
 }

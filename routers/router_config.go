@@ -18,5 +18,9 @@ func SetupConfigRoutes(rg *gin.RouterGroup) {
 		configGroup.GET("/rsa-key", middleware.JWTauth(), configs.GetRsaKey)
 		// JWT 签名密钥手动轮换（控制器内再做管理员校验）
 		configGroup.POST("/rsa-key/rotate", middleware.JWTauth(), configs.RotateRsaKey)
+
+		// 节点巡检阈值配置（登录可见，修改仅管理员）
+		configGroup.GET("/node-inspect", middleware.JWTauth(), configs.GetNodeInspectConfig)
+		configGroup.PUT("/node-inspect", middleware.JWTauth(), configs.UpdateNodeInspectConfig)
 	}
 }

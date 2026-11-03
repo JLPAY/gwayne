@@ -100,6 +100,7 @@ func dbAutoMigrate() error {
 		&PodDiagnosisReport{},
 		&TerminalCommandRule{},
 		&RsaKey{},
+		&NodeInspectConfig{},
 		/*&model.Role{},
 		&model.Group{},
 		&model.Menu{},
