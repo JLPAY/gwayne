@@ -56,6 +56,9 @@ func SetupKubernetesNodeRoutes(rg *gin.RouterGroup) {
 		// 节点巡检：按可配置巡检项执行（内存/磁盘/CPU/负载/压力/FD/Pod/证书等）
 		nodeGroup.GET("/inspect", node.Inspect)
 
+		// 手动巡检结果推送企业微信机器人（前端弹确认后调用）
+		nodeGroup.POST("/inspect/notify", node.InspectPushWeCom)
+
 		// 节点巡检历史：历次运行汇总 + 明细
 		nodeGroup.GET("/inspect/history", node.History)
 		nodeGroup.GET("/inspect/history/runs", node.HistoryRuns)

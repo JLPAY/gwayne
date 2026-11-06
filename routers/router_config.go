@@ -22,5 +22,7 @@ func SetupConfigRoutes(rg *gin.RouterGroup) {
 		// 节点巡检阈值配置（登录可见，修改仅管理员）
 		configGroup.GET("/node-inspect", middleware.JWTauth(), configs.GetNodeInspectConfig)
 		configGroup.PUT("/node-inspect", middleware.JWTauth(), configs.UpdateNodeInspectConfig)
+		// 企业微信机器人测试推送（仅管理员）
+		configGroup.POST("/node-inspect/webhook-test", middleware.JWTauth(), configs.TestNodeInspectWebhook)
 	}
 }

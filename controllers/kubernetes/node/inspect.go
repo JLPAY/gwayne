@@ -4,11 +4,12 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/JLPAY/gwayne/models"
-	"github.com/JLPAY/gwayne/pkg/config"
 	"github.com/JLPAY/gwayne/pkg/inspect"
 	"github.com/JLPAY/gwayne/pkg/kubernetes/client"
+	"github.com/JLPAY/gwayne/pkg/notify"
 	k8snode "github.com/JLPAY/gwayne/pkg/kubernetes/resources/node"
 	"github.com/gin-gonic/gin"
 	"k8s.io/klog/v2"
@@ -72,13 +73,37 @@ func inspectCluster(ctx context.Context, cluster string, plan map[k8snode.Inspec
 	if err != nil {
 		return nil, err
 	}
-	r, err := k8snode.InspectNodes(ctx, mgr.Client,
-		config.Conf.Monitor.PrometheusURL,
-		config.Conf.Monitor.PrometheusToken,
-		mgr.Config, plan)
+	promURL, promToken := models.ResolvePrometheus()
+	r, err := k8snode.InspectNodes(ctx, mgr.Client, promURL, promToken, mgr.Config, plan)
 	if err != nil {
 		return nil, err
 	}
 	r.Cluster = cluster
 	return r, nil
+}
+
+// InspectPushWeCom 将用户手动巡检的结果推送到企业微信机器人（推送前置确认，由前端触发）
+// POST /api/v1/kubernetes/nodes/inspect/notify
+// body: {"results":[NodeInspectionResult,...]}；webhook 地址取已保存配置（客户端不可指定）。
+func InspectPushWeCom(c *gin.Context) {
+	var body struct {
+		Results []k8snode.NodeInspectionResult `json:"results"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Results) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少巡检结果数据"})
+		return
+	}
+	cfg := models.GetNodeInspectConfig()
+	if !cfg.WebhookEnabled || cfg.WebhookURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "企微机器人推送未启用或未配置 Webhook 地址"})
+		return
+	}
+	md := inspect.BuildInspectReportMarkdown(body.Results, time.Now())
+	if err := notify.SendWeComMarkdown(cfg.WebhookURL, md); err != nil {
+		klog.Errorf("手动推送巡检报告到企微失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	klog.Infof("手动推送巡检报告到企微成功（%d 个集群）", len(body.Results))
+	c.JSON(http.StatusOK, gin.H{"data": "已推送到企业微信群"})
 }

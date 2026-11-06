@@ -52,7 +52,7 @@ type queryResponse struct {
 // baseURL 为到 /api/v1 的上一级地址；token 为空表示匿名访问。
 func InstantQuery(baseURL, token, query string) ([]Sample, error) {
 	if baseURL == "" {
-		return nil, fmt.Errorf("Prometheus 地址未配置（请检查 [Monitor].PrometheusURL）")
+		return nil, fmt.Errorf("Prometheus 地址未配置（请在巡检页面配置 Prometheus 数据源）")
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil {

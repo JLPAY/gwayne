@@ -46,6 +46,8 @@ type KubeletSummary struct {
 			} `json:"imageFs"`
 		} `json:"runtime"`
 	} `json:"node"`
+	// Pods 该节点上的 Pod 明细数组（仅取长度作为节点实际 Pod 数）
+	Pods []json.RawMessage `json:"pods"`
 }
 
 // NodeInspectionItem 单个节点的巡检结果（按巡检项拆分到 Checks）
@@ -77,8 +79,9 @@ type clusterMetrics struct {
 	coresMap   map[string]float64 // CPU 核数
 	fdAllocMap map[string]float64 // node_filefd_allocated
 	fdMaxMap   map[string]float64 // node_filefd_maximum
-	podCount   map[string]int     // 节点实际 Pod 数
-	promFailed bool
+	podCount    map[string]int     // 节点实际 Pod 数（API 列举，回退用）
+	podListErr  error              // API 列举 Pod 失败原因（供 Pod 巡检项展示）
+	promFailed  bool               // Prometheus 是否不可达
 }
 
 // GetNodeStatsSummary 经 API server 代理调用 kubelet /stats/summary，拿到内存 workingSet。
@@ -203,10 +206,11 @@ func collectClusterMetrics(ctx context.Context, clientset kubernetes.Interface, 
 		return m, firstErr
 	}
 
-	// Pod 计数（按 spec.nodeName）
+	// Pod 计数（按 spec.nodeName；作为 kubelet stats 的回退来源）
 	pods, err := clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		klog.Warningf("列举 Pod 失败（Pod 巡检项将不可用）: %v", err)
+		m.podListErr = err
+		klog.Warningf("列举 Pod 失败（Pod 计数回退不可用）: %v", err)
 	} else {
 		for i := range pods.Items {
 			nn := pods.Items[i].Spec.NodeName
@@ -277,7 +281,7 @@ func inspectOneNode(ctx context.Context, clientset kubernetes.Interface, n *v1.N
 	if th, ok := plan[ItemCPU]; ok && th.Enabled {
 		if m.promFailed {
 			checks = append(checks, unavailableCheck(ItemCPU, "Prometheus 不可达"))
-		} else if util, ok := m.cpuMap[ln]; ok {
+		} else if util, ok := metricValue(m.cpuMap, n); ok {
 			pct := util * 100
 			checks = append(checks, usageCheck(ItemCPU, pct, th, fmt.Sprintf("%.1f%%", pct), ""))
 		} else {
@@ -289,8 +293,8 @@ func inspectOneNode(ctx context.Context, clientset kubernetes.Interface, n *v1.N
 	if th, ok := plan[ItemLoad]; ok && th.Enabled {
 		if m.promFailed {
 			checks = append(checks, unavailableCheck(ItemLoad, "Prometheus 不可达"))
-		} else if load1, ok1 := m.loadMap[ln]; ok1 {
-			cores := m.coresMap[ln]
+		} else if load1, ok1 := metricValue(m.loadMap, n); ok1 {
+			cores, _ := metricValue(m.coresMap, n)
 			if cores > 0 {
 				ratio := load1 / cores * 100
 				checks = append(checks, usageCheck(ItemLoad, ratio, th, fmt.Sprintf("load1 %.2f / cores %.0f", load1, cores), ""))
@@ -306,8 +310,8 @@ func inspectOneNode(ctx context.Context, clientset kubernetes.Interface, n *v1.N
 	if th, ok := plan[ItemFD]; ok && th.Enabled {
 		if m.promFailed {
 			checks = append(checks, unavailableCheck(ItemFD, "Prometheus 不可达"))
-		} else if max, ok := m.fdMaxMap[ln]; ok && max > 0 {
-			alloc := m.fdAllocMap[ln]
+		} else if max, ok := metricValue(m.fdMaxMap, n); ok && max > 0 {
+			alloc, _ := metricValue(m.fdAllocMap, n)
 			pct := float64(alloc) / max * 100
 			checks = append(checks, usageCheck(ItemFD, pct, th, fmt.Sprintf("%.1f%%", pct), fmt.Sprintf("%s / %s", humanBytes(int64(alloc)), humanBytes(int64(max)))))
 		} else {
@@ -315,18 +319,36 @@ func inspectOneNode(ctx context.Context, clientset kubernetes.Interface, n *v1.N
 		}
 	}
 
-	// Pod 数量
+	// Pod 数量：优先 kubelet /stats/summary 的 pods 数组（节点实际运行的 Pod，不受 API 列举权限影响），
+	// 回退 API 全量列举按 spec.nodeName 计数
 	if th, ok := plan[ItemPod]; ok && th.Enabled {
-		used := m.podCount[n.Name]
 		alloc := int64(0)
 		if p := n.Status.Allocatable.Pods(); p != nil {
 			alloc = p.Value()
 		}
-		if alloc > 0 {
+		used, src := 0, ""
+		if kubeletErr == nil && summary.Pods != nil {
+			used, src = len(summary.Pods), "kubelet stats"
+		} else if cnt := m.podCount[n.Name]; cnt > 0 {
+			used, src = cnt, "api"
+		}
+		if alloc > 0 && src != "" {
 			pct := float64(used) / float64(alloc) * 100
-			checks = append(checks, usageCheck(ItemPod, pct, th, fmt.Sprintf("%d/%d", used, alloc), ""))
+			checks = append(checks, usageCheck(ItemPod, pct, th,
+				fmt.Sprintf("%d/%d", used, alloc), "来源: "+src))
 		} else {
-			checks = append(checks, unavailableCheck(ItemPod, "节点可分配 Pod 数为空"))
+			detail := "无 Pod 数据"
+			if kubeletErr != nil && summary.Pods == nil {
+				detail = "kubelet 统计拉取失败: " + kubeletErr.Error()
+			}
+			if m.podListErr != nil {
+				detail += "; Pod 列举失败: " + m.podListErr.Error()
+			}
+			if alloc <= 0 {
+				checks = append(checks, unavailableCheck(ItemPod, "节点可分配 Pod 数为空"))
+			} else {
+				checks = append(checks, unavailableCheck(ItemPod, detail))
+			}
 		}
 	}
 
@@ -408,6 +430,23 @@ func isNodeReady(n *v1.Node) bool {
 // normInst 归一化 instance（去 :port、转小写）以便与节点名匹配
 func normInst(inst string) string {
 	return strings.ToLower(strings.Split(inst, ":")[0])
+}
+
+// metricValue 按节点匹配 Prometheus 即时指标。
+// node-exporter 的 instance 可能是节点名（kube-rbac-proxy 部署）或 IP:端口（主机部署），
+// 因此先按节点名匹配，再按节点 InternalIP 匹配（指标键已由 normInst 去端口小写）。
+func metricValue(mm map[string]float64, n *v1.Node) (float64, bool) {
+	if v, ok := mm[strings.ToLower(n.Name)]; ok {
+		return v, true
+	}
+	for _, a := range n.Status.Addresses {
+		if a.Type == v1.NodeInternalIP {
+			if v, ok := mm[strings.ToLower(a.Address)]; ok {
+				return v, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // metaName 取巡检项 i18n key

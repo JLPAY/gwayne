@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -15,10 +16,26 @@ type NodeInspectConfig struct {
 	Items string `gorm:"type:text" json:"items"`
 	// ScheduleEnabled 是否开启定时巡检任务
 	ScheduleEnabled bool `gorm:"default:false" json:"scheduleEnabled"`
-	// ScheduleInterval 定时巡检间隔（分钟）
+	// ScheduleInterval 定时巡检间隔（分钟；ScheduleCron 为空时的回退方式）
 	ScheduleInterval int `gorm:"default:60" json:"scheduleInterval"`
+	// ScheduleCron 定时巡检 crontab 表达式（5 段标准格式，如 "0 */6 * * *"）；非空时优先于间隔
+	ScheduleCron string `gorm:"type:varchar(64)" json:"scheduleCron"`
+	// ScheduleClusters 定时巡检的集群范围（逗号分隔集群名，空 = 全部已注册集群）
+	ScheduleClusters string `gorm:"type:varchar(512)" json:"scheduleClusters"`
 	// RetentionDays 历史记录保留天数（超期自动清理）
 	RetentionDays int `gorm:"default:90" json:"retentionDays"`
+
+	// WebhookEnabled 定时巡检完成后是否推送企业微信机器人
+	WebhookEnabled bool `gorm:"default:false" json:"webhookEnabled"`
+	// WebhookURL 企业微信群机器人 webhook 地址
+	WebhookURL string `gorm:"type:varchar(512)" json:"webhookUrl"`
+	// WebhookOnlyWarning 仅存在告警/严重节点（或巡检失败）时才推送
+	WebhookOnlyWarning bool `gorm:"default:false" json:"webhookOnlyWarning"`
+
+	// PrometheusURL 巡检数据源地址（页面配置，未配置时巡检项报「地址未配置」）
+	PrometheusURL string `gorm:"type:varchar(512)" json:"prometheusUrl"`
+	// PrometheusToken 可选 Bearer Token（前端回显，注意权限）
+	PrometheusToken string `gorm:"type:varchar(512)" json:"prometheusToken"`
 
 	CreateTime *time.Time `gorm:"autoCreateTime" json:"createTime,omitempty"`
 	UpdateTime *time.Time `gorm:"autoUpdateTime" json:"updateTime,omitempty"`
@@ -64,9 +81,25 @@ func GetNodeInspectConfig() *NodeInspectConfig {
 	return cfg
 }
 
+// ParseScheduleClusters 解析定时巡检集群范围（逗号分隔）；空返回 nil 表示全部集群。
+func (c *NodeInspectConfig) ParseScheduleClusters() []string {
+	if c == nil || strings.TrimSpace(c.ScheduleClusters) == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range strings.Split(c.ScheduleClusters, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // ParseItems 解析 Items JSON；空或非法返回 nil（调用方回退到注册表默认值）。
-func (c *NodeInspectConfig) ParseItems() []NodeInspectItemConfig {
-	if c == nil || c.Items == "" {
+func (c *NodeInspectConfig) ParseItems() []NodeInspectItemConfig {	if c == nil || c.Items == "" {
 		return nil
 	}
 	var items []NodeInspectItemConfig
@@ -76,8 +109,9 @@ func (c *NodeInspectConfig) ParseItems() []NodeInspectItemConfig {
 	return items
 }
 
-// SaveNodeInspectConfig 写入单例配置（upsert id=1）。调用方需先校验 items/阈值合法性。
-func SaveNodeInspectConfig(items []NodeInspectItemConfig, scheduleEnabled bool, scheduleInterval, retentionDays int) (*NodeInspectConfig, error) {
+// SaveNodeInspectConfig 写入单例配置（upsert id=1）。调用方需先校验 items/阈值/cron 合法性。
+// opts 携带除 Items 外的全部配置字段。
+func SaveNodeInspectConfig(items []NodeInspectItemConfig, opts *NodeInspectConfig) (*NodeInspectConfig, error) {
 	raw := "[]"
 	if items != nil {
 		b, err := json.Marshal(items)
@@ -86,21 +120,38 @@ func SaveNodeInspectConfig(items []NodeInspectItemConfig, scheduleEnabled bool, 
 		}
 		raw = string(b)
 	}
-	if scheduleInterval <= 0 {
-		scheduleInterval = DefaultScheduleInterval
+	if opts == nil {
+		opts = &NodeInspectConfig{}
 	}
-	if retentionDays <= 0 {
-		retentionDays = DefaultRetentionDays
+	if opts.ScheduleInterval <= 0 {
+		opts.ScheduleInterval = DefaultScheduleInterval
+	}
+	if opts.RetentionDays <= 0 {
+		opts.RetentionDays = DefaultRetentionDays
 	}
 	cfg := &NodeInspectConfig{
-		Id:               1,
-		Items:            raw,
-		ScheduleEnabled:  scheduleEnabled,
-		ScheduleInterval: scheduleInterval,
-		RetentionDays:    retentionDays,
+		Id:                 1,
+		Items:              raw,
+		ScheduleEnabled:    opts.ScheduleEnabled,
+		ScheduleInterval:   opts.ScheduleInterval,
+		ScheduleCron:       strings.TrimSpace(opts.ScheduleCron),
+		ScheduleClusters:   opts.ScheduleClusters,
+		RetentionDays:      opts.RetentionDays,
+		WebhookEnabled:     opts.WebhookEnabled,
+		WebhookURL:         opts.WebhookURL,
+		WebhookOnlyWarning: opts.WebhookOnlyWarning,
+		PrometheusURL:      strings.TrimSpace(opts.PrometheusURL),
+		PrometheusToken:    strings.TrimSpace(opts.PrometheusToken),
 	}
 	if err := DB.Save(cfg).Error; err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ResolvePrometheus 解析巡检数据源：仅来自巡检配置页面（node_inspect_config 单例）。
+// 未配置时返回空值，由 Prometheus 客户端报「地址未配置」明确提示。
+func ResolvePrometheus() (url, token string) {
+	cfg := GetNodeInspectConfig()
+	return cfg.PrometheusURL, cfg.PrometheusToken
 }
